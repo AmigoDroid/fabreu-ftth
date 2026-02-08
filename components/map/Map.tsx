@@ -1,4 +1,3 @@
-// components/map/Map.tsx
 "use client"
 
 import { GoogleMap, DrawingManager, useLoadScript } from "@react-google-maps/api"
@@ -35,22 +34,13 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
       .catch(() => setCenter({ lat: -23.55, lng: -46.63 }))
   }, [])
 
-  if (!isLoaded || !center) return <p>Carregando…</p>
-
-  // ✅ pega a CEO "viva" (atualizada) do array, via ID
+  // ✅ NÃO usa hook aqui (pra não quebrar ordem)
   const ceoSelecionada =
     fiber.selectedCEOId != null
       ? fiber.ceos.find((c) => c.id === fiber.selectedCEOId) ?? null
       : null
 
-  // ✅ pega os 2 cabos ligados à CEO selecionada
-  const caboA = ceoSelecionada
-    ? fiber.fiberList.find((x) => x.id === ceoSelecionada.caboAId) ?? null
-    : null
-
-  const caboB = ceoSelecionada
-    ? fiber.fiberList.find((x) => x.id === ceoSelecionada.caboBId) ?? null
-    : null
+  if (!isLoaded || !center) return <p>Carregando…</p>
 
   return (
     <>
@@ -70,17 +60,23 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         />
       )}
 
-      {/* ✅ Editor da CEO (atualiza em tempo real) */}
-      {ceoSelecionada && caboA && caboB && (
-        <CEOEditor
-          ceo={ceoSelecionada}
-          caboA={caboA}
-          caboB={caboB}
-          onClose={() => fiber.setSelectedCEOId(null)}
-          onFuse={fiber.fuseFibers}
-          onUnfuse={fiber.unfuseFibers}
-        />
-      )}
+      {/* ✅ CEO Editor (multi-cabos/ports) */}
+      
+      {ceoSelecionada && (
+  <CEOEditor
+    ceo={ceoSelecionada}
+    fibers={fiber.fiberList}
+    onClose={() => fiber.setSelectedCEOId(null)}
+    onAddOutPort={fiber.addOutPort}
+    onConnectCable={fiber.connectCableToPort}
+    onFuse={fiber.fuseFibers}
+    onUnfuse={fiber.unfuseFibers}
+    onAddSplitter={fiber.addSplitter}
+    onRemoveSplitter={fiber.removeSplitter}
+    onUpdateSplitterUnbalanced={fiber.updateSplitterUnbalanced}
+  />
+)}
+      
 
       <GoogleMap
         center={center}
@@ -94,7 +90,6 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           fiber.placeCEOAt({ lat, lng })
         }}
       >
-   
         {drawMode && (
           <DrawingManager
             drawingMode={fiber.drawingMode}
@@ -109,6 +104,15 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           ceos={fiber.ceos}
           onSelectCEO={(c) => fiber.setSelectedCEOId(c.id)}
         />
+
+        {/* Linhas de fusão ao redor da CEO
+         <FusionLinesLayer
+          ceos={fiber.ceos}
+          fiberList={fiber.fiberList}
+          onlyCEOId={fiber.selectedCEOId}
+        />
+        */}
+       
 
         <FiberLayer
           fibers={fiber.fiberList}

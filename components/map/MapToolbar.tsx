@@ -63,7 +63,7 @@ export function MapToolbar({
       </button>
 
       {/* Salvar edição */}
-      <button
+      {/*<button
         style={btn}
         onClick={onSave}
         disabled={disabledSave}
@@ -71,7 +71,7 @@ export function MapToolbar({
       >
         <img src="/icons/salve.png" width={28} />
       </button>
-
+*/}
       {/* Cancelar */}
       <button
         style={{
@@ -87,7 +87,7 @@ export function MapToolbar({
         }}
         title="Cancelar"
       >
-        Cancelar
+        Salvar
       </button>
     </div>
   )
