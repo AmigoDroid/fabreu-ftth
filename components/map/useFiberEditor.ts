@@ -13,7 +13,9 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     list.map((c) => ({
       ...c,
       fibras:
-        (c as any).fibras && Array.isArray((c as any).fibras) && (c as any).fibras.length > 0
+        (c as any).fibras &&
+        Array.isArray((c as any).fibras) &&
+        (c as any).fibras.length > 0
           ? ((c as any).fibras as FiberCore[])
           : gerarFibras(12)
     }))
@@ -24,7 +26,6 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
 
   const [selectedFiber, setSelectedFiber] =
     useState<FiberSegment | null>(null)
-    
 
   const [mode, setMode] = useState<Mode>(null)
 
@@ -36,7 +37,8 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
 
   // ✅ CEOs + CEO selecionada para editar
   const [ceos, setCeos] = useState<CEO[]>([])
- const [selectedCEOId, setSelectedCEOId] = useState<number | null>(null)
+  const [selectedCEOId, setSelectedCEOId] = useState<number | null>(null)
+
   const polylineRefs = useRef<Record<number, google.maps.Polyline>>({})
 
   // listeners de edição do path
@@ -51,6 +53,45 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     return polyline.getPath().getArray().map((p) => ({
       lat: p.lat(),
       lng: p.lng()
+    }))
+  }
+
+  // =========================
+  // Helpers: progresso no cabo
+  // =========================
+  function dist(a: LatLng, b: LatLng) {
+    return google.maps.geometry.spherical.computeDistanceBetween(
+      new google.maps.LatLng(a.lat, a.lng),
+      new google.maps.LatLng(b.lat, b.lng)
+    )
+  }
+
+  function progressAlongPath(path: LatLng[], point: LatLng) {
+    const closest = findClosestPointOnPath(path, point, 25)
+
+    let total = 0
+    for (let i = 0; i < closest.segIndex; i++) {
+      total += dist(path[i], path[i + 1])
+    }
+
+    const segLen = dist(path[closest.segIndex], path[closest.segIndex + 1])
+
+    const a = new google.maps.LatLng(
+      path[closest.segIndex].lat,
+      path[closest.segIndex].lng
+    )
+    const p = new google.maps.LatLng(closest.point.lat, closest.point.lng)
+
+    const walked = segLen > 0 ? google.maps.geometry.spherical.computeDistanceBetween(a, p) : 0
+    const t = segLen > 0 ? walked / segLen : 0
+
+    return total + segLen * Math.max(0, Math.min(1, t))
+  }
+
+  function cloneFibras(fibras: FiberCore[]) {
+    return fibras.map((x) => ({
+      ...x,
+      fibraFusionadaCom: x.fibraFusionadaCom ?? null
     }))
   }
 
@@ -142,7 +183,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   }
 
   // =========================
-  // CEO: clicar no cabo => dividir e criar CEO
+  // CEO: clicar no cabo => dividir e criar CEO (suporta várias CEOs)
   // =========================
   function placeCEOAt(click: LatLng) {
     let best: {
@@ -168,7 +209,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
 
     if (!best) return
 
-    // limite de snap (metros) - ajuste se quiser
+    // limite de snap (metros)
     if (best.dist > 120) return
 
     const split = splitPathAt(best.fiber.path, {
@@ -182,12 +223,15 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     const caboBId = baseId + 1
     const ceoId = baseId + 2
 
+    const fibrasOriginais =
+      best.fiber.fibras?.length ? best.fiber.fibras : gerarFibras(12)
+
     const caboA: FiberSegment = {
       ...best.fiber,
       id: caboAId,
       nome: `${best.fiber.nome} A`,
       path: split.partA,
-      fibras: best.fiber.fibras?.length ? best.fiber.fibras : gerarFibras(12)
+      fibras: cloneFibras(fibrasOriginais)
     }
 
     const caboB: FiberSegment = {
@@ -195,7 +239,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       id: caboBId,
       nome: `${best.fiber.nome} B`,
       path: split.partB,
-      fibras: best.fiber.fibras?.length ? best.fiber.fibras : gerarFibras(12)
+      fibras: cloneFibras(fibrasOriginais)
     }
 
     const novaCEO: CEO = {
@@ -208,10 +252,30 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       fusoes: []
     }
 
+    // ✅ progresso do ponto de corte no cabo antigo
+    const cutProg = progressAlongPath(best.fiber.path, best.point)
+
+    // ✅ atualiza CEOs antigas que referenciavam esse cabo (pra não quebrar)
+    setCeos((prev) =>
+      prev
+        .map((c) => {
+          const usaA = c.caboAId === best!.fiber.id
+          const usaB = c.caboBId === best!.fiber.id
+          if (!usaA && !usaB) return c
+
+          const ceoProg = progressAlongPath(best!.fiber.path, c.position)
+          const novoId = ceoProg <= cutProg ? caboAId : caboBId
+
+          if (usaA) return { ...c, caboAId: novoId }
+          return { ...c, caboBId: novoId }
+        })
+        .concat([novaCEO])
+    )
+
+    // remove cabo antigo e adiciona os 2 novos
     setFiberList((prev) =>
       prev.filter((x) => x.id !== best!.fiber.id).concat([caboA, caboB])
     )
-    setCeos((prev) => [...prev, novaCEO])
 
     setSelectedFiber(null)
     setMode(null)
@@ -225,7 +289,6 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       prev.map((c) => {
         if (c.id !== ceoId) return c
 
-        // bloqueia duplicadas: A já usada ou B já usada
         const jaTem = c.fusoes.some(
           (f) => f.aFibraId === aFibraId || f.bFibraId === bFibraId
         )

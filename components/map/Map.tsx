@@ -113,6 +113,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         <FiberLayer
           fibers={fiber.fiberList}
           selectedFiber={fiber.selectedFiber}
+          ceos={fiber.ceos}
           setSelectedFiber={fiber.setSelectedFiber}
           polylineRefs={fiber.polylineRefs}
         />
