@@ -1,5 +1,5 @@
 // app/page.tsx
-import Map from "@/components/Map"
+import Map from "@/components/map/Map"
 import { clients, fibers } from "@/lib/fakeData"
 
 export default function Home() {
