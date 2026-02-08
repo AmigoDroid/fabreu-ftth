@@ -28,7 +28,9 @@ type Props = {
 export default function Map({ clients, fibers, drawMode = false }: Props) {
   const { isLoaded } = useLoadScript({
     googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY!,
-    libraries: drawMode ? ["drawing"] : []
+    libraries: drawMode
+      ? ["drawing", "geometry"]
+      : ["geometry"]
   })
 
   const [mapCenter, setMapCenter] =
@@ -53,7 +55,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         })
       })
       .catch(() => {
-        setMapCenter({ lat: -23.55052, lng: -46.633308 }) // fallback
+        setMapCenter({ lat: -23.55052, lng: -46.633308 })
       })
   }, [])
 
@@ -61,15 +63,62 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     return <p>Carregando mapa...</p>
   }
 
-  /* ================= FUNÇÃO AUXILIAR ================= */
+  /* ================= FUNÇÕES ================= */
+
   function getFiberCenter(path: { lat: number; lng: number }[]) {
-    const middleIndex = Math.floor(path.length / 2)
-    return path[middleIndex]
+    return path[Math.floor(path.length / 2)]
+  }
+
+  function calcularComprimento(
+    path: { lat: number; lng: number }[]
+  ) {
+    let total = 0
+
+    for (let i = 1; i < path.length; i++) {
+      const p1 = new google.maps.LatLng(path[i - 1])
+      const p2 = new google.maps.LatLng(path[i])
+      total +=
+        google.maps.geometry.spherical.computeDistanceBetween(
+          p1,
+          p2
+        )
+    }
+
+    return total // metros
+  }
+
+  function calcularPerdaGPON(
+    comprimentoMetros: number,
+    {
+      emendas = 2,
+      conectores = 2,
+      splitterDb = 17 // splitter 1:32
+    } = {}
+  ) {
+    const km = comprimentoMetros / 1000
+
+    const perdaFibra = km * 0.25 // dB/km @1490nm
+    const perdaEmendas = emendas * 0.1
+    const perdaConectores = conectores * 0.2
+
+    const perdaTotal =
+      perdaFibra +
+      perdaEmendas +
+      perdaConectores +
+      splitterDb
+
+    return {
+      perdaFibra,
+      perdaEmendas,
+      perdaConectores,
+      splitterDb,
+      perdaTotal
+    }
   }
 
   return (
     <>
-      {/* =============== POPUP DE SALVAR FIBRA =============== */}
+      {/* ================= POPUP SALVAR ================= */}
       <PopupSalvar
         open={salve}
         onSalvar={(form) => {
@@ -79,7 +128,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
               id: Date.now(),
               nome: form.campo1,
               descricao: form.campo2,
-              color: "black",
+              color: "#000000",
               path: [...fibraPathTemp]
             }
           ])
@@ -89,7 +138,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         onCancelar={() => setSalve(false)}
       />
 
-      {/* ======================= MAPA ======================= */}
+      {/* ================= MAPA ================= */}
       <GoogleMap
         mapContainerStyle={containerStyle}
         center={mapCenter}
@@ -107,7 +156,6 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           />
         ))}
 
-        {/* INFO CLIENTE */}
         {selectedClient && (
           <InfoWindow
             position={selectedClient.position}
@@ -122,43 +170,69 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         )}
 
         {/* ================= FIBRAS ================= */}
-        {fiberList.map((f) => (
-          <Polyline
-            key={f.id}
-            path={f.path}
-            options={{
-              strokeColor: f.color,
-              strokeWeight: 5,
-              clickable: true,
-              zIndex: 10
-            }}
-            onClick={() => {
-              f.color = "green" // muda cor para destacar
-              setSelectedFiber(f)
-              setSelectedClient(null)
-            }}
-          />
-        ))}
+        {fiberList.map((f) => {
+          const isSelected = selectedFiber?.id === f.id
+
+          return (
+            <Polyline
+              key={f.id}
+              path={f.path}
+              options={{
+                strokeColor: isSelected ? "#00ffff" : f.color,
+                strokeWeight: isSelected ? 8 : 5,
+                strokeOpacity: isSelected ? 1 : 0.8,
+                clickable: true,
+                zIndex: isSelected ? 99 : 10
+              }}
+              onClick={() => {
+                setSelectedFiber(f)
+                setSelectedClient(null)
+              }}
+            />
+          )
+        })}
 
         {/* INFO FIBRA */}
-        {selectedFiber && (
-          <InfoWindow
-          
-            position={getFiberCenter(selectedFiber.path)}
-            onCloseClick={() => {
-              selectedFiber.color = "black"
-              setSelectedFiber(null)
-            }}
-          >
-            <div>
-              <strong>Fibra: {selectedFiber.nome}</strong>
-              <br />
-              Pontos: {selectedFiber.path.length}
-            </div>
-          </InfoWindow>
-        )}
+        {selectedFiber && (() => {
+          const comprimento = calcularComprimento(
+            selectedFiber.path
+          )
+          const perda = calcularPerdaGPON(comprimento,{ emendas:0, conectores:0, splitterDb:0 })
 
-        {/* ================= MODO DESENHO ================= */}
+          return (
+            <InfoWindow
+              position={getFiberCenter(selectedFiber.path)}
+              onCloseClick={() => setSelectedFiber(null)}
+            >
+              <div style={{ minWidth: 220 }}>
+                <strong>
+                  Fibra: {selectedFiber.nome}
+                </strong>
+                <br />
+                📏 {comprimento <= 1000? comprimento.toFixed(1) : (comprimento/1000).toFixed(2)} km
+                <br />
+                📉 Perda estimada:{" "}
+                {perda.perdaTotal.toFixed(2)} dB
+                <hr />
+                <small>
+                  Fibra:{" "}
+                  {perda.perdaFibra.toFixed(2)} dB
+                  <br />
+                 0 Emendas:{" "}
+                  {perda.perdaEmendas.toFixed(2)} dB
+                  <br />
+                0  Conectores:{" "}
+                  {perda.perdaConectores.toFixed(2)} dB
+                  <br />
+                0  Splitter:{" "}
+                  {perda.splitterDb.toFixed(2)} dB
+                </small>
+              </div>
+            </InfoWindow>
+          )
+        })()}
+
+        {/* ================= DESENHO ================= */}
         {drawMode && (
           <DrawingManager
             options={{
@@ -189,7 +263,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
 
               setFibraPathTemp(path)
               setSalve(true)
-              polyline.setMap(null) // remove o desenho temporário
+              polyline.setMap(null)
             }}
           />
         )}
