@@ -28,7 +28,7 @@ export function FiberLayer({
             key={f.id}
             path={f.path}
             options={{
-              strokeColor: isSelected ? "#00ff00" : f.color,
+              strokeColor: isSelected ? "#00ff00" : "black",
               strokeWeight: isSelected ? 8 : 5,
               editable: isSelected
             }}
