@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   CEO,
   FiberSegment,
@@ -155,9 +155,9 @@ export function CEOEditor({
     return m
   }, [ceo.fusoes, activeOutPortId])
 
-  function getColorIN(fibraId: number) {
+  const getColorIN = useCallback((fibraId: number) => {
     return caboIN?.fibras.find((x) => x.id === fibraId)?.cor ?? "#111"
-  }
+  }, [caboIN?.fibras])
 
   function tryFuse(aId: number | null, bId: number | null) {
     if (!aId || !bId) return
@@ -223,17 +223,17 @@ export function CEOEditor({
     return `${ref.portId} / Fibra ${ref.fibraId}`
   }
 
-  function refColor(ref: SplitterRef | null) {
+  const refColor = useCallback((ref: SplitterRef | null) => {
     if (!ref) return "#777"
     const cabo = cableByPortId.get(ref.portId)
     const cor = cabo?.fibras.find((x) => x.id === ref.fibraId)?.cor
     return cor ?? "#777"
-  }
+  }, [cableByPortId])
 
-  function getLegTarget(leg: number) {
+  const getLegTarget = useCallback((leg: number) => {
     if (!activeSplitter) return null
     return activeSplitter.outputs.find((o) => o.leg === leg)?.target ?? null
-  }
+  }, [activeSplitter])
 
   // ===== linhas (SVG) splice + splitter =====
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -326,8 +326,8 @@ export function CEOEditor({
 
     return () => {
       cancelAnimationFrame(raf)
-      panelEl.removeEventListener("scroll", onScroll as any)
-      window.removeEventListener("resize", calc as any)
+      panelEl.removeEventListener("scroll", onScroll)
+      window.removeEventListener("resize", calc)
       ro.disconnect()
     }
   }, [
@@ -344,7 +344,11 @@ export function CEOEditor({
     caboIN?.fibras,
     caboOUT?.fibras,
     leftPortId,
-    rightPortId
+    rightPortId,
+    activeSplitter,
+    getLegTarget,
+    getColorIN,
+    refColor
   ])
 
   const panel: React.CSSProperties = {

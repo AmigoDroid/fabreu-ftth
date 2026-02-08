@@ -3,7 +3,7 @@ import "./forminput.css"
 
 type PopupSalvarProps = {
   open: boolean;
-  onSalvar: (data: any) => void;
+  onSalvar: (data: { campo1: string; campo2: string }) => void;
   onContinuar: () => void;
   onCancelar: () => void;
 
@@ -12,7 +12,7 @@ type PopupSalvarProps = {
 export function PopupSalvar({
   open,
   onSalvar,
-  onContinuar,
+  onContinuar: _onContinuar,
   onCancelar,
 }: PopupSalvarProps) {
   const [form, setForm] = useState({
@@ -20,6 +20,8 @@ export function PopupSalvar({
     campo2: "",
     
   });
+
+  void _onContinuar;
 
   if (!open) return null;
 

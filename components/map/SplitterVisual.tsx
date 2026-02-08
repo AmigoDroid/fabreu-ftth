@@ -1,23 +1,23 @@
 "use client"
 
 import React, { useMemo, useState } from "react"
-import { CEO, FiberSegment, CEOSplitter, PortFiberRef, SplitterType, SplitterMode } from "@/types/ftth"
+import { CEO, FiberSegment, CEOSplitter, SplitterRef, CEOSplitterType, CEOSplitterMode } from "@/types/ftth"
 
 type Props = {
   ceo: CEO
   fibers: FiberSegment[] // fiberList total
   splitter: CEOSplitter
 
-  onChangeType: (ceoId: number, splitterId: string, type: SplitterType) => void
-  onChangeMode: (ceoId: number, splitterId: string, mode: SplitterMode) => void
+  onChangeType: (ceoId: number, splitterId: string, type: CEOSplitterType) => void
+  onChangeMode: (ceoId: number, splitterId: string, mode: CEOSplitterMode) => void
 
-  onSetInput: (ceoId: number, splitterId: string, ref: PortFiberRef | null) => void
-  onSetOutput: (ceoId: number, splitterId: string, leg: number, ref: PortFiberRef | null) => void
+  onSetInput: (ceoId: number, splitterId: string, ref: SplitterRef | null) => void
+  onSetOutput: (ceoId: number, splitterId: string, leg: number, ref: SplitterRef | null) => void
 
   onRemove: (ceoId: number, splitterId: string) => void
 }
 
-function legsFromType(t: SplitterType) {
+function legsFromType(t: CEOSplitterType) {
   const n = Number(t.replace("1x", ""))
   return Array.from({ length: n }, (_, i) => i + 1)
 }
@@ -28,7 +28,7 @@ function getCableByPortId(ceo: CEO, fibers: FiberSegment[], portId: string) {
   return fibers.find((f) => f.id === p.caboId) ?? null
 }
 
-function getFiberColor(ceo: CEO, fibers: FiberSegment[], ref: PortFiberRef | null) {
+function getFiberColor(ceo: CEO, fibers: FiberSegment[], ref: SplitterRef | null) {
   if (!ref) return "#777"
   const cabo = getCableByPortId(ceo, fibers, ref.portId)
   const cor = cabo?.fibras.find((x) => x.id === ref.fibraId)?.cor
@@ -122,7 +122,7 @@ export function SplitterEditor({
       <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
         <select
           value={splitter.type}
-          onChange={(e) => onChangeType(ceo.id, splitter.id, e.target.value as SplitterType)}
+          onChange={(e) => onChangeType(ceo.id, splitter.id, e.target.value as CEOSplitterType)}
           style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
         >
           <option value="1x2">1x2</option>
@@ -133,7 +133,7 @@ export function SplitterEditor({
 
         <select
           value={splitter.mode}
-          onChange={(e) => onChangeMode(ceo.id, splitter.id, e.target.value as SplitterMode)}
+          onChange={(e) => onChangeMode(ceo.id, splitter.id, e.target.value as CEOSplitterMode)}
           style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
         >
           <option value="BALANCED">Balanceado</option>
@@ -162,7 +162,7 @@ export function SplitterEditor({
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {cabo.fibras.map((f) => {
-                      const ref: PortFiberRef = { portId: port.id, fibraId: f.id }
+                      const ref: SplitterRef = { portId: port.id, fibraId: f.id }
                       const active =
                         splitter.input?.portId === ref.portId && splitter.input?.fibraId === ref.fibraId
 
@@ -303,7 +303,7 @@ export function SplitterEditor({
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {cabo.fibras.map((f) => {
-                      const ref: PortFiberRef = { portId: port.id, fibraId: f.id }
+                      const ref: SplitterRef = { portId: port.id, fibraId: f.id }
                       const active =
                         activeTarget?.portId === ref.portId && activeTarget?.fibraId === ref.fibraId
 
