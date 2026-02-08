@@ -17,15 +17,21 @@ import { gerarFibras } from "@/components/map/gerarfibras"
 type LatLng = { lat: number; lng: number }
 type Mode = "draw-fiber" | "place-ceo" | null
 
+type FiberFormData = {
+  campo1: string
+  campo2: string
+  totalFibras?: number
+}
+
 export function useFiberEditor(initialFibers: FiberSegment[]) {
   const normalizeFibers = (list: FiberSegment[]) =>
     list.map((c) => ({
       ...c,
       fibras:
-        (c as any).fibras &&
-        Array.isArray((c as any).fibras) &&
-        (c as any).fibras.length > 0
-          ? ((c as any).fibras as FiberCore[])
+        c.fibras &&
+        Array.isArray(c.fibras) &&
+        c.fibras.length > 0
+          ? c.fibras
           : gerarFibras(12)
     }))
 
@@ -103,7 +109,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       ...c,
       ports: Array.isArray(c.ports) ? c.ports : [],
       fusoes: Array.isArray(c.fusoes) ? c.fusoes : [],
-      splitters: Array.isArray((c as any).splitters) ? (c as any).splitters : []
+      splitters: Array.isArray(c.splitters) ? c.splitters : []
     }
   }
 
@@ -137,7 +143,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     setMode(null)
   }
 
-  function salvarNovaFibra(form: any) {
+  function salvarNovaFibra(form: FiberFormData) {
     const total = Number(form.totalFibras ?? 12)
     setFiberList((prev) => [
       ...prev,

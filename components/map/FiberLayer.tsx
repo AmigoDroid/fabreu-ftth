@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react"
 import { Polyline, InfoWindow } from "@react-google-maps/api"
-import { CEO, FiberSegment, SplitterRef } from "@/types/ftth"
+import { CEO, FiberSegment } from "@/types/ftth"
 import { calcularComprimento, getFiberCenter } from "./mapUtils"
 
 type State = { cableId: number; coreId: number }
@@ -98,7 +98,7 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
   const netCore = useMemo(() => {
     if (!selectedFiber) return null
     return traceCoreNetwork(selectedFiber.id, coreId, fibers, ceos)
-  }, [selectedFiber?.id, coreId, fibers, ceos])
+  }, [selectedFiber, coreId, fibers, ceos])
 
   const coreSegmentIds = useMemo(() => {
     const ids = new Set<number>()
