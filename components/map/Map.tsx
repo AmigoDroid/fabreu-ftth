@@ -1,3 +1,4 @@
+// components/map/Map.tsx
 "use client"
 
 import { GoogleMap, DrawingManager, useLoadScript } from "@react-google-maps/api"
@@ -11,7 +12,6 @@ import { CEOLayer } from "./CEOLayer"
 import { useFiberEditor } from "./useFiberEditor"
 import { Client, FiberSegment } from "@/types/ftth"
 import { CEOEditor } from "./CEOEditor"
-import { FusionLinesLayer } from "./FusionLinesLayer"
 
 type Props = {
   clients: Client[]
@@ -34,13 +34,12 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
       .catch(() => setCenter({ lat: -23.55, lng: -46.63 }))
   }, [])
 
-  // ✅ NÃO usa hook aqui (pra não quebrar ordem)
+  if (!isLoaded || !center) return <p>Carregando…</p>
+
   const ceoSelecionada =
     fiber.selectedCEOId != null
       ? fiber.ceos.find((c) => c.id === fiber.selectedCEOId) ?? null
       : null
-
-  if (!isLoaded || !center) return <p>Carregando…</p>
 
   return (
     <>
@@ -60,23 +59,22 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         />
       )}
 
-      {/* ✅ CEO Editor (multi-cabos/ports) */}
-      
       {ceoSelecionada && (
-  <CEOEditor
-    ceo={ceoSelecionada}
-    fibers={fiber.fiberList}
-    onClose={() => fiber.setSelectedCEOId(null)}
-    onAddOutPort={fiber.addOutPort}
-    onConnectCable={fiber.connectCableToPort}
-    onFuse={fiber.fuseFibers}
-    onUnfuse={fiber.unfuseFibers}
-    onAddSplitter={fiber.addSplitter}
-    onRemoveSplitter={fiber.removeSplitter}
-    onUpdateSplitterUnbalanced={fiber.updateSplitterUnbalanced}
-  />
-)}
-      
+        <CEOEditor
+          ceo={ceoSelecionada}
+          fibers={fiber.fiberList}
+          onClose={() => fiber.setSelectedCEOId(null)}
+          onAddOutPort={fiber.addOutPort}
+          onConnectCable={fiber.connectCableToPort}
+          onFuse={fiber.fuseFibers}
+          onUnfuse={fiber.unfuseFibers}
+          onAddSplitter={fiber.addSplitter}
+          onRemoveSplitter={fiber.removeSplitter}
+          onSetSplitterInputRef={fiber.setSplitterInputRef}
+          onSetSplitterOutputRef={fiber.setSplitterOutputRef}
+          onSetSplitterLegUnbalanced={fiber.setSplitterLegUnbalanced}
+        />
+      )}
 
       <GoogleMap
         center={center}
@@ -100,19 +98,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
 
         <ClientLayer clients={clients} />
 
-        <CEOLayer
-          ceos={fiber.ceos}
-          onSelectCEO={(c) => fiber.setSelectedCEOId(c.id)}
-        />
-
-        {/* Linhas de fusão ao redor da CEO
-         <FusionLinesLayer
-          ceos={fiber.ceos}
-          fiberList={fiber.fiberList}
-          onlyCEOId={fiber.selectedCEOId}
-        />
-        */}
-       
+        <CEOLayer ceos={fiber.ceos} onSelectCEO={(c) => fiber.setSelectedCEOId(c.id)} />
 
         <FiberLayer
           fibers={fiber.fiberList}
