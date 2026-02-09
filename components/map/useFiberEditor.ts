@@ -1,5 +1,5 @@
 ﻿// components/map/useFiberEditor.ts
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import {
   CEO,
   FiberSegment,
@@ -62,17 +62,12 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   const [pendingPlacement, setPendingPlacement] = useState<PlacementDraft | null>(null)
 
   const polylineRefs = useRef<Record<number, google.maps.Polyline>>({})
-  const editListenersRef = useRef<google.maps.MapsEventListener[]>([])
-  const idRef = useRef(Date.now())
+  const seedId = initialFibers.reduce((max, f) => (f.id > max ? f.id : max), 0) + 1000
+  const idRef = useRef(seedId)
 
   function nextId() {
     idRef.current += 1
     return idRef.current
-  }
-
-  function clearEditListeners() {
-    editListenersRef.current.forEach((l) => l.remove())
-    editListenersRef.current = []
   }
 
   function extractPath(polyline: google.maps.Polyline): LatLng[] {
@@ -173,10 +168,6 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     }
   }
 
-  function refKey(ref: SplitterRef) {
-    return `${ref.portId}::${ref.fibraId}`
-  }
-
   function eachUsedRef(c: CEO, cb: (ref: SplitterRef, source: string) => void) {
     for (const f of c.fusoes) {
       cb({ portId: f.a.portId, fibraId: f.a.fibraId }, `fusao-a-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`)
@@ -207,16 +198,18 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     return c.splitters.find((s) => s.role === "PRIMARY") ?? null
   }
 
-  function findPlacementCandidate(click: LatLng) {
+  function findPlacementCandidate(click: LatLng, sourceFiberId?: number) {
     let best: { fiber: FiberSegment; dist: number; segIndex: number; point: LatLng } | null = null
 
-    for (const f of fiberList) {
+    const candidates = sourceFiberId != null ? fiberList.filter((f) => f.id === sourceFiberId) : fiberList
+    for (const f of candidates) {
       if (!f.path || f.path.length < 2) continue
       const closest = findClosestPointOnPath(f.path, click, 25)
       if (!best || closest.dist < best.dist) best = { fiber: f, dist: closest.dist, segIndex: closest.segIndex, point: closest.point }
     }
 
-    if (!best || best.dist > 120) return null
+    if (!best) return null
+    if (sourceFiberId == null && best.dist > 120) return null
 
     const split = splitPathAt(best.fiber.path, { point: best.point, segIndex: best.segIndex })
     if (!split) return null
@@ -263,35 +256,6 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     setOpenSave(false)
   }
 
-  // =========================
-  // Edit path realtime
-  // =========================
-  useEffect(() => {
-    clearEditListeners()
-    if (!selectedFiber) return
-
-    const polyline = polylineRefs.current[selectedFiber.id]
-    if (!polyline) return
-
-    const mvcPath = polyline.getPath()
-
-    const sync = () => {
-      const novoPath = mvcPath.getArray().map((p) => ({ lat: p.lat(), lng: p.lng() }))
-      setFiberList((prev) => prev.map((f) => (f.id === selectedFiber.id ? { ...f, path: novoPath } : f)))
-    }
-
-    sync()
-
-    editListenersRef.current = [
-      google.maps.event.addListener(mvcPath, "set_at", sync),
-      google.maps.event.addListener(mvcPath, "insert_at", sync),
-      google.maps.event.addListener(mvcPath, "remove_at", sync)
-    ]
-
-    return () => clearEditListeners()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFiber?.id])
-
   function salvarEdicao() {
     if (!selectedFiber) return
     const polyline = polylineRefs.current[selectedFiber.id]
@@ -307,8 +271,8 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   // =========================
   // Place box (CEO / CTO)
   // =========================
-  function startPlaceBoxAt(click: LatLng, kind: BoxKind) {
-    const candidate = findPlacementCandidate(click)
+  function startPlaceBoxAt(click: LatLng, kind: BoxKind, sourceFiberId?: number) {
+    const candidate = findPlacementCandidate(click, sourceFiberId)
     if (!candidate) {
       alert("Nao foi possivel posicionar a caixa. Clique mais perto de um cabo.")
       return
@@ -317,7 +281,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     setPendingPlacement({
       kind,
       sourceFiberId: candidate.sourceFiberId,
-      point: candidate.point,
+      point: sourceFiberId != null ? click : candidate.point,
       segIndex: candidate.segIndex,
       partA: candidate.partA,
       partB: candidate.partB

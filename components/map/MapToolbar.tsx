@@ -2,9 +2,10 @@
 type Props = {
   setDrawingMode: (mode: google.maps.drawing.OverlayType | null) => void
   setMode: (m: "draw-fiber" | "place-ceo" | "place-cto" | null) => void
+  mode: "draw-fiber" | "place-ceo" | "place-cto" | null
 }
 
-export function MapToolbar({ setDrawingMode, setMode }: Props) {
+export function MapToolbar({ setDrawingMode, setMode, mode }: Props) {
   const btn: React.CSSProperties = {
     background: "transparent",
     border: "none",
@@ -33,7 +34,32 @@ export function MapToolbar({ setDrawingMode, setMode }: Props) {
         }}
         title="Desenhar fibra"
       >
-        <img src="/icons/fibra.png" width={28} />
+        <img src="/icons/fibra.png" width={28} alt="Desenhar fibra" />
+      </button>
+
+      <button
+        style={{
+          ...btn,
+          padding: "6px 10px",
+          borderRadius: 8,
+          background: mode === "draw-fiber" ? "#111" : "#fff",
+          color: mode === "draw-fiber" ? "#fff" : "#111",
+          border: "1px solid #ddd",
+          fontWeight: 700
+        }}
+        onClick={() => {
+          if (mode !== "draw-fiber") {
+            setMode("draw-fiber")
+            setDrawingMode(google.maps.drawing.OverlayType.POLYLINE)
+            return
+          }
+          // Finaliza o desenho atual para abrir o popup de salvar.
+          setDrawingMode(null)
+          setMode(null)
+        }}
+        title="Finalizar e salvar cabo"
+      >
+        Salvar cabo
       </button>
 
       <button

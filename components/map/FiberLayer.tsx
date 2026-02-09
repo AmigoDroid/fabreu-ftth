@@ -93,10 +93,23 @@ type Props = {
   selectedFiber: FiberSegment | null
   setSelectedFiber: (f: FiberSegment | null) => void
   polylineRefs: React.MutableRefObject<Record<number, google.maps.Polyline>>
+  onSaveEdit: () => void
+  mode: "draw-fiber" | "place-ceo" | "place-cto" | null
+  onRequestPlaceBox: (click: { lat: number; lng: number }, sourceFiberId: number) => void
 }
 
-export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, polylineRefs }: Props) {
+export function FiberLayer({
+  fibers,
+  ceos,
+  selectedFiber,
+  setSelectedFiber,
+  polylineRefs,
+  onSaveEdit,
+  mode,
+  onRequestPlaceBox
+}: Props) {
   const [coreId, setCoreId] = useState<number>(1)
+  const [infoPosition, setInfoPosition] = useState<google.maps.LatLngLiteral | null>(null)
 
   const netCore = useMemo(() => {
     if (!selectedFiber) return null
@@ -131,9 +144,30 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
               editable: isSelected
             }}
             onLoad={(poly) => {
+              const prev = polylineRefs.current[f.id]
+              if (prev && prev !== poly) prev.setMap(null)
               polylineRefs.current[f.id] = poly
             }}
-            onClick={() => setSelectedFiber(f)}
+            onUnmount={() => {
+              const cur = polylineRefs.current[f.id]
+              if (cur) {
+                cur.setMap(null)
+                delete polylineRefs.current[f.id]
+              }
+            }}
+            onClick={(e) => {
+              const lat = e.latLng?.lat()
+              const lng = e.latLng?.lng()
+              if (lat == null || lng == null) return
+
+              if (mode === "place-ceo" || mode === "place-cto") {
+                onRequestPlaceBox({ lat, lng }, f.id)
+                return
+              }
+
+              setInfoPosition({ lat, lng })
+              setSelectedFiber(f)
+            }}
           />
         )
       })}
@@ -141,7 +175,8 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
       {selectedFiber &&
         (() => {
           const center = getFiberCenter(selectedFiber.path) as google.maps.LatLngLiteral | null
-          if (!center) return null
+          const popupPos = infoPosition ?? center
+          if (!popupPos) return null
 
           const coreSegments = netCore?.segments ?? [selectedFiber]
           const coreM = coreSegments.reduce((acc, f) => acc + calcularComprimento(f.path), 0)
@@ -151,7 +186,13 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
           const perdaFibra = coreKm * atenuacaoPorKm
 
           return (
-            <InfoWindow position={center} onCloseClick={() => setSelectedFiber(null)}>
+            <InfoWindow
+              position={popupPos}
+              onCloseClick={() => {
+                setInfoPosition(null)
+                setSelectedFiber(null)
+              }}
+            >
               <div style={{ minWidth: 300, lineHeight: 1.35 }}>
                 <div style={{ fontWeight: 800 }}>Cabo: {selectedFiber.nome}</div>
 
@@ -187,6 +228,39 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
 
                 <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
                   Trechos atravessados (inclui splitters se conectados): {coreSegments.length}
+                </div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                  <button
+                    onClick={onSaveEdit}
+                    style={{
+                      border: "1px solid #ddd",
+                      background: "#111",
+                      color: "#fff",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      fontWeight: 700
+                    }}
+                  >
+                    Salvar cabo
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInfoPosition(null)
+                      setSelectedFiber(null)
+                    }}
+                    style={{
+                      border: "1px solid #ddd",
+                      background: "#fff",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      fontWeight: 700
+                    }}
+                  >
+                    Fechar
+                  </button>
                 </div>
               </div>
             </InfoWindow>

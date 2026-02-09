@@ -64,6 +64,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         <MapToolbar
           setDrawingMode={fiber.setDrawingMode}
           setMode={fiber.setMode}
+          mode={fiber.mode}
         />
       )}
 
@@ -91,6 +92,8 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           onClose={() => fiber.setSelectedCEOId(null)}
           onAddOutPort={fiber.addOutPort}
           onConnectCable={fiber.connectCableToPort}
+          onFuse={fiber.fuseFibers}
+          onUnfuse={fiber.unfuseFibers}
           onSetSplitterInputRef={fiber.setSplitterInputRef}
           onSetSplitterOutputRef={fiber.setSplitterOutputRef}
           onAddCTOSecondarySplitter={fiber.addCTOSecondarySplitter}
@@ -107,9 +110,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           const lat = e.latLng?.lat()
           const lng = e.latLng?.lng()
           if (lat == null || lng == null) return
-
-          const kind = fiber.mode === "place-cto" ? "CTO" : "CEO"
-          fiber.startPlaceBoxAt({ lat, lng }, kind)
+          alert("Clique diretamente no cabo para posicionar a caixa exatamente no ponto desejado.")
         }}
       >
         {drawMode && (
@@ -130,6 +131,13 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           ceos={fiber.ceos}
           setSelectedFiber={fiber.setSelectedFiber}
           polylineRefs={fiber.polylineRefs}
+          onSaveEdit={fiber.salvarEdicao}
+          mode={fiber.mode}
+          onRequestPlaceBox={(click, sourceFiberId) => {
+            if (fiber.mode !== "place-ceo" && fiber.mode !== "place-cto") return
+            const kind = fiber.mode === "place-cto" ? "CTO" : "CEO"
+            fiber.startPlaceBoxAt(click, kind, sourceFiberId)
+          }}
         />
       </GoogleMap>
     </>
