@@ -1,7 +1,9 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { CEO, CEOSplitterType, FiberSegment, SplitterRef } from "@/types/ftth"
+
+type Pt = { x: number; y: number }
 
 type Props = {
   ceo: CEO
@@ -11,9 +13,10 @@ type Props = {
   onConnectCable: (ceoId: number, portId: string, caboId: number | null) => void
   onFuse: (ceoId: number, aPortId: string, aFibraId: number, bPortId: string, bFibraId: number) => void
   onUnfuse: (ceoId: number, aPortId: string, aFibraId: number, bPortId: string, bFibraId: number) => void
+  onAddCTOPrimarySplitter: (ceoId: number) => void
   onSetSplitterInputRef: (ceoId: number, splitterId: string, ref: SplitterRef | null) => void
   onSetSplitterOutputRef: (ceoId: number, splitterId: string, leg: number, ref: SplitterRef | null) => void
-  onAddCTOSecondarySplitter: (ceoId: number, type: "1x8" | "1x16", parentLeg: number) => void
+  onAddCTOSecondarySplitter: (ceoId: number, type: "1x8" | "1x16", parentLeg: number | null) => void
   onRemoveSplitter: (ceoId: number, splitterId: string) => void
 }
 
@@ -62,6 +65,7 @@ export function CTOEditor({
   onConnectCable,
   onFuse,
   onUnfuse,
+  onAddCTOPrimarySplitter,
   onSetSplitterInputRef,
   onSetSplitterOutputRef,
   onAddCTOSecondarySplitter,
@@ -93,13 +97,13 @@ export function CTOEditor({
 
   const [leftPortId, setLeftPortId] = useState<string>(pluggedPorts[0]?.id ?? "IN-1")
   const [secondaryType, setSecondaryType] = useState<"1x8" | "1x16">("1x8")
-  const [secondaryLeg, setSecondaryLeg] = useState<number>(1)
+  const [secondaryLeg, setSecondaryLeg] = useState<number | null>(null)
   const [activeSecondaryId, setActiveSecondaryId] = useState<string | null>(secondaries[0]?.id ?? null)
   const [activeOutLeg, setActiveOutLeg] = useState<number>(1)
   const [targetPortId, setTargetPortId] = useState<string>(pluggedPorts[0]?.id ?? "OUT-1")
 
   const activeSecondary = useMemo(
-    () => (activeSecondaryId ? secondaries.find((s) => s.id === activeSecondaryId) ?? null : null),
+    () => (activeSecondaryId ? secondaries.find((s) => s.id === activeSecondaryId) ?? secondaries[0] ?? null : secondaries[0] ?? null),
     [activeSecondaryId, secondaries]
   )
   const allTraySplitters = useMemo(
@@ -110,7 +114,10 @@ export function CTOEditor({
   const [trayOutLeg, setTrayOutLeg] = useState<number>(1)
 
   const activeTraySplitter = useMemo(
-    () => (activeTraySplitterId ? allTraySplitters.find((s) => s.id === activeTraySplitterId) ?? null : null),
+    () =>
+      activeTraySplitterId
+        ? allTraySplitters.find((s) => s.id === activeTraySplitterId) ?? allTraySplitters[0] ?? null
+        : allTraySplitters[0] ?? null,
     [activeTraySplitterId, allTraySplitters]
   )
   const trayLegs = useMemo(
@@ -210,8 +217,77 @@ export function CTOEditor({
     return cabo?.fibras.find((x) => x.id === ref.fibraId)?.cor ?? "#bbb"
   }
 
+  const getColorIN = useCallback((fibraId: number) => {
+    return caboIN?.fibras.find((x) => x.id === fibraId)?.cor ?? "#111"
+  }, [caboIN?.fibras])
+
+  const fusedInToOut = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const f of ceo.fusoes) {
+      if (f.a.portId === "IN-1" && f.b.portId === activeOutPortId) m.set(f.a.fibraId, f.b.fibraId)
+      if (f.b.portId === "IN-1" && f.a.portId === activeOutPortId) m.set(f.b.fibraId, f.a.fibraId)
+    }
+    return m
+  }, [ceo.fusoes, activeOutPortId])
+
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const spliceDiagramRef = useRef<HTMLDivElement | null>(null)
+  const [spliceCurves, setSpliceCurves] = useState<Array<{ key: string; a: Pt; b: Pt; color: string }>>([])
+
+  useLayoutEffect(() => {
+    if (tab !== "SPLICE") return
+    const panelEl = panelRef.current
+    const diagramEl = spliceDiagramRef.current
+    if (!panelEl || !diagramEl) return
+
+    let raf = 0
+    const calc = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const baseRect = diagramEl.getBoundingClientRect()
+        const next: Array<{ key: string; a: Pt; b: Pt; color: string }> = []
+
+        for (const [aFibraId, bFibraId] of fusedInToOut.entries()) {
+          const aEl = diagramEl.querySelector<HTMLElement>(`[data-cto-sp-in="${aFibraId}"]`)
+          const bEl = diagramEl.querySelector<HTMLElement>(`[data-cto-sp-out="${bFibraId}"]`)
+          if (!aEl || !bEl) continue
+
+          const aRect = aEl.getBoundingClientRect()
+          const bRect = bEl.getBoundingClientRect()
+          next.push({
+            key: `cto-sp-${ceo.id}-${activeOutPortId}-${aFibraId}-${bFibraId}`,
+            a: { x: aRect.right - baseRect.left, y: aRect.top - baseRect.top + aRect.height / 2 },
+            b: { x: bRect.left - baseRect.left, y: bRect.top - baseRect.top + bRect.height / 2 },
+            color: getColorIN(aFibraId)
+          })
+        }
+
+        setSpliceCurves(next)
+      })
+    }
+
+    calc()
+    const onScroll = () => calc()
+    panelEl.addEventListener("scroll", onScroll, { passive: true })
+    window.addEventListener("resize", calc, { passive: true })
+    const ro = new ResizeObserver(() => calc())
+    ro.observe(diagramEl)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      panelEl.removeEventListener("scroll", onScroll)
+      window.removeEventListener("resize", calc)
+      ro.disconnect()
+    }
+  }, [tab, fusedInToOut, ceo.id, activeOutPortId, getColorIN])
+
+  const effectiveTrayOutLeg = useMemo(
+    () => (trayLegs.includes(trayOutLeg) ? trayOutLeg : trayLegs[0] ?? 1),
+    [trayLegs, trayOutLeg]
+  )
+
   return (
-    <div style={panel}>
+    <div ref={panelRef} style={panel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10 }}>
         <div>
           <div style={{ fontWeight: 900, fontSize: 16 }}>{ceo.nome} (CTO)</div>
@@ -317,9 +393,16 @@ export function CTOEditor({
       </div>
 
       {tab === "SPLICE" && (
-        <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>Fusoes de passagem (IN para OUT)</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+        <div ref={spliceDiagramRef} style={{ position: "relative", marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }}>
+            {spliceCurves.map((ln) => {
+              const mid = (ln.b.x - ln.a.x) * 0.35
+              const d = `M ${ln.a.x} ${ln.a.y} C ${ln.a.x + mid} ${ln.a.y}, ${ln.b.x - mid} ${ln.b.y}, ${ln.b.x} ${ln.b.y}`
+              return <path key={ln.key} d={d} fill="none" stroke={ln.color} strokeWidth={3} strokeLinecap="round" opacity={0.92} />
+            })}
+          </svg>
+          <div style={{ position: "relative", zIndex: 2, fontWeight: 900, marginBottom: 8 }}>Fusoes de passagem (IN para OUT)</div>
+          <div style={{ position: "relative", zIndex: 2, display: "grid", gridTemplateColumns: "1fr 44px 1fr", gap: 12, alignItems: "start" }}>
             <div>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>
                 IN-1 {caboIN ? `| ${caboIN.nome}` : "| sem cabo"}
@@ -334,6 +417,7 @@ export function CTOEditor({
                     return (
                       <div
                         key={`in-${f.id}`}
+                        data-cto-sp-in={f.id}
                         style={chipStyle(f.cor, active, disabled)}
                         onClick={() => {
                           if (disabled) return
@@ -354,6 +438,10 @@ export function CTOEditor({
               )}
             </div>
 
+            <div style={{ display: "grid", placeItems: "center", paddingTop: 6 }}>
+              <div style={{ width: 30, height: 160, border: "2px solid #111", borderRadius: 10, background: "#fff" }} />
+            </div>
+
             <div>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>
                 {activeOutPortId} {caboOUT ? `| ${caboOUT.nome}` : "| sem cabo"}
@@ -368,6 +456,7 @@ export function CTOEditor({
                     return (
                       <div
                         key={`out-${activeOutPortId}-${f.id}`}
+                        data-cto-sp-out={f.id}
                         style={chipStyle(f.cor, active, disabled)}
                         onClick={() => {
                           if (disabled) return
@@ -434,7 +523,17 @@ export function CTOEditor({
             <div style={{ fontWeight: 900, marginBottom: 8 }}>Splitter primario 1x8</div>
 
             {!primary ? (
-              <div style={{ fontSize: 12, color: "#666" }}>Primario nao encontrado na CTO.</div>
+              <div style={{ border: "1px dashed #ddd", borderRadius: 10, padding: 10 }}>
+                <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+                  Sem splitter primario na CTO. Ele e opcional.
+                </div>
+                <button
+                  onClick={() => onAddCTOPrimarySplitter(ceo.id)}
+                  style={{ border: "1px solid #ddd", background: "#111", color: "#fff", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontWeight: 900 }}
+                >
+                  + Adicionar primario 1x8
+                </button>
+              </div>
             ) : (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "center" }}>
@@ -526,10 +625,11 @@ export function CTOEditor({
               <div>
                 <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>Perna do primario</div>
                 <select
-                  value={secondaryLeg}
-                  onChange={(e) => setSecondaryLeg(Number(e.target.value))}
+                  value={secondaryLeg == null ? "" : String(secondaryLeg)}
+                  onChange={(e) => setSecondaryLeg(e.target.value ? Number(e.target.value) : null)}
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
                 >
+                  <option value="">Sem primario (entrada por fusao)</option>
                   {freePrimaryLegs.map((leg) => (
                     <option key={leg} value={leg}>Perna {leg}</option>
                   ))}
@@ -609,6 +709,36 @@ export function CTOEditor({
                         <option key={p.id} value={p.id}>{p.label} ({p.id})</option>
                       ))}
                     </select>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                    Portas de atendimento ({fanout(activeSecondary.type)})
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
+                    {Array.from({ length: fanout(activeSecondary.type) }, (_, i) => i + 1).map((leg) => {
+                      const linked = activeSecondary.outputs.find((o) => o.leg === leg)?.target ?? null
+                      const selected = activeOutLeg === leg
+                      return (
+                        <button
+                          key={`client-port-${leg}`}
+                          onClick={() => setActiveOutLeg(leg)}
+                          style={{
+                            border: selected ? "2px solid #111" : "1px solid #ddd",
+                            background: selected ? "#111" : "#fff",
+                            color: selected ? "#fff" : "#111",
+                            borderRadius: 10,
+                            padding: "8px 6px",
+                            cursor: "pointer",
+                            fontWeight: 900
+                          }}
+                          title={linked ? "Porta ligada" : "Porta livre"}
+                        >
+                          C{leg} {linked ? "• ON" : "• OFF"}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -696,11 +826,7 @@ export function CTOEditor({
                   <div style={{ fontWeight: 900, marginBottom: 8 }}>
                     Esquerda | {leftCable ? leftCable.nome : "sem cabo"}
                   </div>
-                  {activeTraySplitter.role === "SECONDARY" ? (
-                    <div style={{ fontSize: 12, color: "#666", border: "1px dashed #ddd", borderRadius: 10, padding: 10 }}>
-                      Entrada do splitter de atendimento vem da perna {activeTraySplitter.parentLeg ?? "-"} do primario.
-                    </div>
-                  ) : !leftCable ? (
+                  {!leftCable ? (
                     <div style={{ fontSize: 12, color: "#666" }}>Selecione uma porta com cabo na origem do sinal.</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -716,6 +842,11 @@ export function CTOEditor({
                               if (busy) return
                               onSetSplitterInputRef(ceo.id, activeTraySplitter.id, ref)
                             }}
+                            title={
+                              activeTraySplitter.role === "SECONDARY"
+                                ? "Definir entrada do splitter de atendimento (por fusao da rede)"
+                                : "Definir entrada do primario"
+                            }
                           >
                             <span style={dotStyle(f.cor)} />
                             <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
@@ -736,15 +867,12 @@ export function CTOEditor({
                   <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
                       <div
-                        style={{
+                          style={{
                           width: 20,
                           height: 20,
                           borderRadius: 999,
                           border: "2px solid #111",
-                          background:
-                            activeTraySplitter.role === "PRIMARY"
-                              ? refColor(activeTraySplitter.input)
-                              : refColor(primary?.input ?? null)
+                          background: refColor(activeTraySplitter.input ?? (activeTraySplitter.role === "SECONDARY" ? primary?.input ?? null : null))
                         }}
                       />
                       <div style={{ fontSize: 11, fontWeight: 900 }}>IN</div>
@@ -753,7 +881,7 @@ export function CTOEditor({
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
                       {trayLegs.map((leg) => {
                         const target = activeTraySplitter.outputs.find((o) => o.leg === leg)?.target ?? null
-                        const selected = trayOutLeg === leg
+                        const selected = effectiveTrayOutLeg === leg
                         return (
                           <button
                             key={`tray-leg-${leg}`}
@@ -777,7 +905,7 @@ export function CTOEditor({
 
                 <div>
                   <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Direita | {targetCable ? targetCable.nome : "sem cabo"} | OUT {trayOutLeg}
+                    Direita | {targetCable ? targetCable.nome : "sem cabo"} | OUT {effectiveTrayOutLeg}
                   </div>
                   {!targetCable ? (
                     <div style={{ fontSize: 12, color: "#666" }}>Selecione uma porta/cabo de atendimento.</div>
@@ -785,14 +913,11 @@ export function CTOEditor({
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {targetCable.fibras.map((f) => {
                         const ref: SplitterRef = { portId: targetPortId, fibraId: f.id }
-                        const current = activeTraySplitter.outputs.find((o) => o.leg === trayOutLeg)?.target ?? null
+                        const current = activeTraySplitter.outputs.find((o) => o.leg === effectiveTrayOutLeg)?.target ?? null
                         const active = current?.portId === ref.portId && current?.fibraId === ref.fibraId
                         const busy = used.has(refKey(ref)) && !active
                         const sameFiberAsInput = primaryInputEquals(ref)
-                        const blockedBySignal =
-                          activeTraySplitter.role === "PRIMARY"
-                            ? !activeTraySplitter.input
-                            : !primary?.input
+                        const blockedBySignal = !activeTraySplitter.input
                         const disabled = busy || sameFiberAsInput || blockedBySignal
 
                         return (
@@ -801,13 +926,13 @@ export function CTOEditor({
                             style={chipStyle(f.cor, active, disabled)}
                             onClick={() => {
                               if (disabled) return
-                              onSetSplitterOutputRef(ceo.id, activeTraySplitter.id, trayOutLeg, ref)
+                              onSetSplitterOutputRef(ceo.id, activeTraySplitter.id, effectiveTrayOutLeg, ref)
                             }}
                           >
                             <span style={dotStyle(f.cor)} />
                             <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
                             <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
-                              {active ? `OUT ${trayOutLeg}` : blockedBySignal ? "sem IN" : busy ? "ocupada" : "-"}
+                              {active ? `OUT ${effectiveTrayOutLeg}` : blockedBySignal ? "sem IN" : busy ? "ocupada" : "-"}
                             </div>
                           </div>
                         )
@@ -816,10 +941,10 @@ export function CTOEditor({
                   )}
 
                   <button
-                    onClick={() => onSetSplitterOutputRef(ceo.id, activeTraySplitter.id, trayOutLeg, null)}
+                    onClick={() => onSetSplitterOutputRef(ceo.id, activeTraySplitter.id, effectiveTrayOutLeg, null)}
                     style={{ marginTop: 10, border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
                   >
-                    Limpar OUT {trayOutLeg}
+                    Limpar OUT {effectiveTrayOutLeg}
                   </button>
                 </div>
               </div>

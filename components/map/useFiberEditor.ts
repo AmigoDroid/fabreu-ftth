@@ -314,9 +314,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     const caboA: FiberSegment = { ...sourceFiber, id: caboAId, nome: `${sourceFiber.nome} A`, path: draft.partA, fibras: cloneFibras(fibrasOriginais) }
     const caboB: FiberSegment = { ...sourceFiber, id: caboBId, nome: `${sourceFiber.nome} B`, path: draft.partB, fibras: cloneFibras(fibrasOriginais) }
 
-    const splitters = form.tipo === "CTO"
-      ? [makeSplitter("1x8", "BALANCED", "PRIMARY", null)]
-      : []
+    const splitters: CEOSplitter[] = []
 
     const novaCaixa: CEO = {
       id: ceoId,
@@ -427,15 +425,28 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     )
   }
 
-  function addCTOSecondarySplitter(ceoId: number, type: "1x8" | "1x16", parentLeg: number) {
+  function addCTOPrimarySplitter(ceoId: number) {
     setCeos((prev) =>
       prev.map((c0) => {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
         if (c.tipo !== "CTO") return c
-        if (parentLeg < 1 || parentLeg > 8) return c
+        const hasPrimary = c.splitters.some((s) => s.role === "PRIMARY")
+        if (hasPrimary) return c
+        return { ...c, splitters: [...c.splitters, makeSplitter("1x8", "BALANCED", "PRIMARY", null)] }
+      })
+    )
+  }
 
-        const existsOnLeg = c.splitters.some((s) => s.role === "SECONDARY" && s.parentLeg === parentLeg)
+  function addCTOSecondarySplitter(ceoId: number, type: "1x8" | "1x16", parentLeg: number | null) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        if (parentLeg != null && (parentLeg < 1 || parentLeg > 8)) return c
+
+        const existsOnLeg = parentLeg != null && c.splitters.some((s) => s.role === "SECONDARY" && s.parentLeg === parentLeg)
         if (existsOnLeg) return c
 
         const secondary = makeSplitter(type, "BALANCED", "SECONDARY", parentLeg)
@@ -475,7 +486,6 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
           ...c,
           splitters: c.splitters.map((s) => {
             if (s.id !== splitterId) return s
-            if (c.tipo === "CTO" && s.role === "SECONDARY") return s
             return { ...s, input: ref }
           })
         }
@@ -620,6 +630,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     unfuseFibers,
 
     addSplitter,
+    addCTOPrimarySplitter,
     addCTOSecondarySplitter,
     removeSplitter,
     setSplitterInputRef,

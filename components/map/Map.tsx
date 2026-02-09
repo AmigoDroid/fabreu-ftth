@@ -94,6 +94,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           onConnectCable={fiber.connectCableToPort}
           onFuse={fiber.fuseFibers}
           onUnfuse={fiber.unfuseFibers}
+          onAddCTOPrimarySplitter={fiber.addCTOPrimarySplitter}
           onSetSplitterInputRef={fiber.setSplitterInputRef}
           onSetSplitterOutputRef={fiber.setSplitterOutputRef}
           onAddCTOSecondarySplitter={fiber.addCTOSecondarySplitter}
@@ -107,10 +108,8 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         mapContainerStyle={{ height: "100vh" }}
         onClick={(e) => {
           if (fiber.mode !== "place-ceo" && fiber.mode !== "place-cto") return
-          const lat = e.latLng?.lat()
-          const lng = e.latLng?.lng()
-          if (lat == null || lng == null) return
-          alert("Clique diretamente no cabo para posicionar a caixa exatamente no ponto desejado.")
+          // Posicionamento de caixa agora acontece clicando diretamente no cabo.
+          void e
         }}
       >
         {drawMode && (
