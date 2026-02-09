@@ -47,7 +47,6 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         open={fiber.openSave}
         onSalvar={fiber.salvarNovaFibra}
         onCancelar={() => fiber.setOpenSave(false)}
-        onContinuar={() => fiber.setOpenSave(false)}
       />
 
       {drawMode && (

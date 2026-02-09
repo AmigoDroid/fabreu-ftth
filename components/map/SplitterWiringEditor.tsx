@@ -1,20 +1,20 @@
 "use client"
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
-import { CEO, FiberSegment, CEOSplitter, PortFiberRef, SplitterType } from "@/types/ftth"
+import { CEO, FiberSegment, CEOSplitter, SplitterRef, CEOSplitterType } from "@/types/ftth"
 
 type Props = {
   ceo: CEO
   fibers: FiberSegment[] // fiberList total
   splitter: CEOSplitter
 
-  onSetInput: (ceoId: number, splitterId: string, ref: PortFiberRef | null) => void
-  onSetOutput: (ceoId: number, splitterId: string, leg: number, ref: PortFiberRef | null) => void
+  onSetInput: (ceoId: number, splitterId: string, ref: SplitterRef | null) => void
+  onSetOutput: (ceoId: number, splitterId: string, leg: number, ref: SplitterRef | null) => void
 }
 
 type Pt = { x: number; y: number }
 
-function legsFromType(t: SplitterType) {
+function legsFromType(t: CEOSplitterType) {
   const n = Number(t.replace("1x", ""))
   return Array.from({ length: n }, (_, i) => i + 1)
 }
@@ -40,7 +40,7 @@ function getCableByPortId(ceo: CEO, fibers: FiberSegment[], portId: string) {
   return fibers.find((f) => f.id === p.caboId) ?? null
 }
 
-function getFiberColor(ceo: CEO, fibers: FiberSegment[], ref: PortFiberRef | null) {
+function getFiberColor(ceo: CEO, fibers: FiberSegment[], ref: SplitterRef | null) {
   if (!ref) return "#777"
   const cabo = getCableByPortId(ceo, fibers, ref.portId)
   const cor = cabo?.fibras.find((x) => x.id === ref.fibraId)?.cor
@@ -151,8 +151,8 @@ export function SplitterWiringEditor({ ceo, fibers, splitter, onSetInput, onSetO
 
     return () => {
       cancelAnimationFrame(raf)
-      panelEl.removeEventListener("scroll", onScroll as any)
-      window.removeEventListener("resize", calc as any)
+      panelEl.removeEventListener("scroll", onScroll)
+      window.removeEventListener("resize", calc)
       ro.disconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +266,7 @@ export function SplitterWiringEditor({ ceo, fibers, splitter, onSetInput, onSetO
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {leftCable.fibras.map((f) => {
-                  const ref: PortFiberRef = { portId: leftPortId, fibraId: f.id }
+                  const ref: SplitterRef = { portId: leftPortId, fibraId: f.id }
                   const isInput = splitter.input?.portId === ref.portId && splitter.input?.fibraId === ref.fibraId
                   const active = selLeftFiberId === f.id || isInput
 
@@ -404,7 +404,7 @@ export function SplitterWiringEditor({ ceo, fibers, splitter, onSetInput, onSetO
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {rightCable.fibras.map((f) => {
-                  const ref: PortFiberRef = { portId: rightPortId, fibraId: f.id }
+                  const ref: SplitterRef = { portId: rightPortId, fibraId: f.id }
                   const tgt = legTarget(activeLeg)
                   const active = tgt?.portId === ref.portId && tgt?.fibraId === ref.fibraId
 

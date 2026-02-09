@@ -15,6 +15,11 @@ export type FiberSegment = {
   id: number
   nome: string
   descricao: string
+  tipoCabo?: string
+  fabricante?: string
+  modelo?: string
+  origem?: string
+  destino?: string
   path: LatLng[]
   caboCor?: string
   fibras: FiberCore[]

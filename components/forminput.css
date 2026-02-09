@@ -12,16 +12,36 @@
   background: #fff;
   padding: 20px;
   border-radius: 10px;
-  width: 320px;
+  width: min(520px, 92vw);
+  max-height: 90vh;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.modal input {
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #333;
+  font-weight: 700;
+}
+
+.modal input,
+.modal select,
+.modal textarea {
   padding: 8px;
   border-radius: 6px;
   border: 1px solid #ccc;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.modal textarea {
+  min-height: 80px;
+  resize: vertical;
 }
 
 .buttons {
@@ -33,16 +53,18 @@
 
 .buttons button {
   flex: 1;
-  padding: 8px;
+  padding: 10px;
   border-radius: 6px;
   border: none;
   cursor: pointer;
+  font-weight: 700;
 }
 
 .buttons .cancel {
   background: #e74c3c;
   color: white;
 }
+
 .buttons .save {
   background: #2ecc71;
   color: white;
