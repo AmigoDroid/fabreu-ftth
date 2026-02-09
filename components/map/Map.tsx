@@ -1,10 +1,11 @@
-// components/map/Map.tsx
+﻿// components/map/Map.tsx
 "use client"
 
 import { GoogleMap, DrawingManager, useLoadScript } from "@react-google-maps/api"
 import { useEffect, useState } from "react"
 import { getCurrentCoordinates } from "@/util/geolocaton"
 import { PopupSalvar } from "../formInput"
+import { PopupSalvarCaixa } from "../boxFormPopup"
 import { MapToolbar } from "./MapToolbar"
 import { FiberLayer } from "./FiberLayer"
 import { ClientLayer } from "./ClientLayer"
@@ -12,6 +13,7 @@ import { CEOLayer } from "./CEOLayer"
 import { useFiberEditor } from "./useFiberEditor"
 import { Client, FiberSegment } from "@/types/ftth"
 import { CEOEditor } from "./CEOEditor"
+import { CTOEditor } from "./CTOEditor"
 
 type Props = {
   clients: Client[]
@@ -34,12 +36,14 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
       .catch(() => setCenter({ lat: -23.55, lng: -46.63 }))
   }, [])
 
-  if (!isLoaded || !center) return <p>Carregando…</p>
+  if (!isLoaded || !center) return <p>Carregando...</p>
 
-  const ceoSelecionada =
+  const caixaSelecionada =
     fiber.selectedCEOId != null
       ? fiber.ceos.find((c) => c.id === fiber.selectedCEOId) ?? null
       : null
+
+  const selectedKind = fiber.pendingPlacement?.kind ?? "CEO"
 
   return (
     <>
@@ -49,18 +53,23 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         onCancelar={() => fiber.setOpenSave(false)}
       />
 
+      <PopupSalvarCaixa
+        open={fiber.openBoxSave}
+        kind={selectedKind}
+        onSalvar={fiber.salvarNovaCaixa}
+        onCancelar={fiber.cancelPlaceBox}
+      />
+
       {drawMode && (
         <MapToolbar
           setDrawingMode={fiber.setDrawingMode}
-          onSave={fiber.salvarEdicao}
-          disabledSave={!fiber.selectedFiber}
           setMode={fiber.setMode}
         />
       )}
 
-      {ceoSelecionada && (
+      {caixaSelecionada && caixaSelecionada.tipo === "CEO" && (
         <CEOEditor
-          ceo={ceoSelecionada}
+          ceo={caixaSelecionada}
           fibers={fiber.fiberList}
           onClose={() => fiber.setSelectedCEOId(null)}
           onAddOutPort={fiber.addOutPort}
@@ -75,16 +84,32 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         />
       )}
 
+      {caixaSelecionada && caixaSelecionada.tipo === "CTO" && (
+        <CTOEditor
+          ceo={caixaSelecionada}
+          fibers={fiber.fiberList}
+          onClose={() => fiber.setSelectedCEOId(null)}
+          onAddOutPort={fiber.addOutPort}
+          onConnectCable={fiber.connectCableToPort}
+          onSetSplitterInputRef={fiber.setSplitterInputRef}
+          onSetSplitterOutputRef={fiber.setSplitterOutputRef}
+          onAddCTOSecondarySplitter={fiber.addCTOSecondarySplitter}
+          onRemoveSplitter={fiber.removeSplitter}
+        />
+      )}
+
       <GoogleMap
         center={center}
         zoom={16}
         mapContainerStyle={{ height: "100vh" }}
         onClick={(e) => {
-          if (fiber.mode !== "place-ceo") return
+          if (fiber.mode !== "place-ceo" && fiber.mode !== "place-cto") return
           const lat = e.latLng?.lat()
           const lng = e.latLng?.lng()
           if (lat == null || lng == null) return
-          fiber.placeCEOAt({ lat, lng })
+
+          const kind = fiber.mode === "place-cto" ? "CTO" : "CEO"
+          fiber.startPlaceBoxAt({ lat, lng }, kind)
         }}
       >
         {drawMode && (
@@ -110,3 +135,4 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     </>
   )
 }
+

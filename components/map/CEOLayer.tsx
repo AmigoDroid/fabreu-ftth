@@ -1,4 +1,4 @@
-// components/map/CEOLayer.tsx
+﻿// components/map/CEOLayer.tsx
 import { Marker } from "@react-google-maps/api"
 import { CEO } from "@/types/ftth"
 
@@ -15,7 +15,11 @@ export function CEOLayer({ ceos, onSelectCEO }: Props) {
           key={c.id}
           position={c.position}
           onClick={() => onSelectCEO(c)}
-          // icon="/icons/ceo.png"
+          label={{
+            text: c.tipo,
+            color: c.tipo === "CTO" ? "#0b5fa5" : "#111",
+            fontWeight: "700"
+          }}
         />
       ))}
     </>

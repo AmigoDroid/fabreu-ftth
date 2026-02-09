@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import React, { useMemo, useState } from "react"
 import { Polyline, InfoWindow } from "@react-google-maps/api"
@@ -11,13 +11,11 @@ function traceCoreNetwork(startCableId: number, startCoreId: number, fibers: Fib
   const fiberById = new Map<number, FiberSegment>()
   for (const f of fibers) fiberById.set(f.id, f)
 
-  // helper: resolve caboId a partir do portId dentro da CEO
   function caboIdByPort(ceo: CEO, portId: string): number | null {
     const p = ceo.ports.find((x) => x.id === portId)
     return p?.caboId ?? null
   }
 
-  // grafo: "cableId|coreId" -> lista de próximos estados
   const adj = new Map<string, State[]>()
 
   function addEdge(a: State, b: State) {
@@ -29,7 +27,6 @@ function traceCoreNetwork(startCableId: number, startCoreId: number, fibers: Fib
     adj.get(kb)!.push(a)
   }
 
-  // 1) Fusões: conecta fibra(porta A) <-> fibra(porta B)
   for (const ceo of ceos) {
     for (const f of ceo.fusoes ?? []) {
       const aCabo = caboIdByPort(ceo, f.a.portId)
@@ -41,11 +38,19 @@ function traceCoreNetwork(startCableId: number, startCoreId: number, fibers: Fib
     }
   }
 
-  // 2) Splitters: conecta input <-> cada output.target
   for (const ceo of ceos) {
+    const primary = ceo.splitters.find((s) => s.role === "PRIMARY") ?? null
+
     for (const s of ceo.splitters ?? []) {
-      if (!s.input) continue
-      const inCabo = caboIdByPort(ceo, s.input.portId)
+      let sourceRef = s.input
+
+      if (!sourceRef && ceo.tipo === "CTO" && s.role === "SECONDARY" && primary?.input && s.parentLeg != null) {
+        sourceRef = primary.input
+      }
+
+      if (!sourceRef) continue
+
+      const inCabo = caboIdByPort(ceo, sourceRef.portId)
       if (inCabo == null || !fiberById.has(inCabo)) continue
 
       for (const o of s.outputs ?? []) {
@@ -53,13 +58,11 @@ function traceCoreNetwork(startCableId: number, startCoreId: number, fibers: Fib
         const outCabo = caboIdByPort(ceo, o.target.portId)
         if (outCabo == null || !fiberById.has(outCabo)) continue
 
-        // liga inputFibra -> alvoFibra
-        addEdge({ cableId: inCabo, coreId: s.input.fibraId }, { cableId: outCabo, coreId: o.target.fibraId })
+        addEdge({ cableId: inCabo, coreId: sourceRef.fibraId }, { cableId: outCabo, coreId: o.target.fibraId })
       }
     }
   }
 
-  // BFS
   const visited = new Set<string>()
   const visitedCables = new Set<number>()
   const q: State[] = [{ cableId: startCableId, coreId: startCoreId }]
@@ -144,7 +147,6 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
           const coreM = coreSegments.reduce((acc, f) => acc + calcularComprimento(f.path), 0)
           const coreKm = coreM / 1000
 
-          // parâmetros
           const atenuacaoPorKm = 0.25
           const perdaFibra = coreKm * atenuacaoPorKm
 
@@ -180,8 +182,8 @@ export function FiberLayer({ fibers, ceos, selectedFiber, setSelectedFiber, poly
                   />
                 </div>
 
-                <div style={{ marginTop: 8 }}>📏 Caminho do core: {coreKm.toFixed(2)} km</div>
-                <div style={{ marginTop: 6 }}>📉 Perda estimada: {perdaFibra.toFixed(2)} dB</div>
+                <div style={{ marginTop: 8 }}>Caminho do core: {coreKm.toFixed(2)} km</div>
+                <div style={{ marginTop: 6 }}>Perda estimada: {perdaFibra.toFixed(2)} dB</div>
 
                 <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
                   Trechos atravessados (inclui splitters se conectados): {coreSegments.length}

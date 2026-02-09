@@ -1,4 +1,4 @@
-// types/ftth.ts
+﻿// types/ftth.ts
 export type LatLng = { lat: number; lng: number }
 
 export type FiberRef = { caboId: number; fibraId: number }
@@ -37,12 +37,23 @@ export type CEOFusion = {
   b: { portId: string; fibraId: number }
 }
 
-// ======================
-// SPLITTER (dentro da CEO)
-// ======================
+export type BoxKind = "CEO" | "CTO"
+
+export type BoxFormData = {
+  nome: string
+  codigo: string
+  tipo: BoxKind
+  fabricante: string
+  modelo: string
+  origemSinal: string
+  areaAtendimento: string
+  descricao: string
+}
+
 export type SplitterRef = { portId: string; fibraId: number }
 export type CEOSplitterType = "1x2" | "1x4" | "1x8" | "1x16"
 export type CEOSplitterMode = "BALANCED" | "UNBALANCED"
+export type CEOSplitterRole = "DEFAULT" | "PRIMARY" | "SECONDARY"
 
 export type CEOSplitterOutput = {
   leg: number
@@ -53,6 +64,8 @@ export type CEOSplitter = {
   id: string
   type: CEOSplitterType
   mode: CEOSplitterMode
+  role?: CEOSplitterRole
+  parentLeg?: number | null
   lossDb: number
   input: SplitterRef | null
   outputs: CEOSplitterOutput[]
@@ -61,7 +74,13 @@ export type CEOSplitter = {
 
 export type CEO = {
   id: number
+  tipo: BoxKind
   nome: string
+  codigo?: string
+  fabricante?: string
+  modelo?: string
+  origemSinal?: string
+  areaAtendimento?: string
   descricao: string
   position: LatLng
   ports: CEOPort[]

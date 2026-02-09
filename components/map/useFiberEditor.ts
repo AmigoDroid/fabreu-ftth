@@ -1,4 +1,4 @@
-// components/map/useFiberEditor.ts
+﻿// components/map/useFiberEditor.ts
 import { useEffect, useRef, useState } from "react"
 import {
   CEO,
@@ -9,14 +9,26 @@ import {
   CEOSplitter,
   CEOSplitterMode,
   CEOSplitterType,
-  SplitterRef
+  SplitterRef,
+  CEOSplitterRole,
+  BoxKind,
+  BoxFormData
 } from "@/types/ftth"
 import { findClosestPointOnPath, splitPathAt } from "./geoSplit"
 import { gerarFibras } from "@/components/map/gerarfibras"
 import type { FiberFormData } from "@/components/formInput"
 
 type LatLng = { lat: number; lng: number }
-type Mode = "draw-fiber" | "place-ceo" | null
+type Mode = "draw-fiber" | "place-ceo" | "place-cto" | null
+
+type PlacementDraft = {
+  kind: BoxKind
+  sourceFiberId: number
+  point: LatLng
+  segIndex: number
+  partA: LatLng[]
+  partB: LatLng[]
+}
 
 export function useFiberEditor(initialFibers: FiberSegment[]) {
   const normalizeFibers = (list: FiberSegment[]) =>
@@ -46,8 +58,17 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   const [ceos, setCeos] = useState<CEO[]>([])
   const [selectedCEOId, setSelectedCEOId] = useState<number | null>(null)
 
+  const [openBoxSave, setOpenBoxSave] = useState(false)
+  const [pendingPlacement, setPendingPlacement] = useState<PlacementDraft | null>(null)
+
   const polylineRefs = useRef<Record<number, google.maps.Polyline>>({})
   const editListenersRef = useRef<google.maps.MapsEventListener[]>([])
+  const idRef = useRef(Date.now())
+
+  function nextId() {
+    idRef.current += 1
+    return idRef.current
+  }
 
   function clearEditListeners() {
     editListenersRef.current.forEach((l) => l.remove())
@@ -102,6 +123,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   function normalizeCEO(c: CEO): CEO {
     return {
       ...c,
+      tipo: c.tipo ?? "CEO",
       ports: Array.isArray(c.ports) ? c.ports : [],
       fusoes: Array.isArray(c.fusoes) ? c.fusoes : [],
       splitters: Array.isArray(c.splitters) ? c.splitters : []
@@ -126,6 +148,88 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     }
   }
 
+  function makeSplitter(type: CEOSplitterType, mode: CEOSplitterMode, role: CEOSplitterRole = "DEFAULT", parentLeg: number | null = null): CEOSplitter {
+    const fanout = splitterFanout(type)
+    const outputs = Array.from({ length: fanout }, (_, i) => ({
+      leg: i + 1,
+      target: null as SplitterRef | null
+    }))
+
+    const unbalanced =
+      mode === "UNBALANCED"
+        ? Object.fromEntries(outputs.map((o) => [o.leg, Math.round(100 / fanout)]))
+        : undefined
+
+    return {
+      id: `SPL-${nextId()}`,
+      type,
+      mode,
+      role,
+      parentLeg,
+      lossDb: splitterLoss(type),
+      input: null,
+      outputs,
+      unbalanced
+    }
+  }
+
+  function refKey(ref: SplitterRef) {
+    return `${ref.portId}::${ref.fibraId}`
+  }
+
+  function eachUsedRef(c: CEO, cb: (ref: SplitterRef, source: string) => void) {
+    for (const f of c.fusoes) {
+      cb({ portId: f.a.portId, fibraId: f.a.fibraId }, `fusao-a-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`)
+      cb({ portId: f.b.portId, fibraId: f.b.fibraId }, `fusao-b-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`)
+    }
+
+    for (const s of c.splitters) {
+      if (s.input) cb(s.input, `splitter-in-${s.id}`)
+      for (const o of s.outputs) {
+        if (o.target) cb(o.target, `splitter-out-${s.id}-${o.leg}`)
+      }
+    }
+  }
+
+  function isRefAvailable(c: CEO, ref: SplitterRef, ignoredSources: Set<string>) {
+    let available = true
+    eachUsedRef(c, (r, source) => {
+      if (!available) return
+      if (ignoredSources.has(source)) return
+      if (r.portId === ref.portId && r.fibraId === ref.fibraId) {
+        available = false
+      }
+    })
+    return available
+  }
+
+  function findPrimarySplitter(c: CEO) {
+    return c.splitters.find((s) => s.role === "PRIMARY") ?? null
+  }
+
+  function findPlacementCandidate(click: LatLng) {
+    let best: { fiber: FiberSegment; dist: number; segIndex: number; point: LatLng } | null = null
+
+    for (const f of fiberList) {
+      if (!f.path || f.path.length < 2) continue
+      const closest = findClosestPointOnPath(f.path, click, 25)
+      if (!best || closest.dist < best.dist) best = { fiber: f, dist: closest.dist, segIndex: closest.segIndex, point: closest.point }
+    }
+
+    if (!best || best.dist > 120) return null
+
+    const split = splitPathAt(best.fiber.path, { point: best.point, segIndex: best.segIndex })
+    if (!split) return null
+
+    return {
+      sourceFiberId: best.fiber.id,
+      point: best.point,
+      segIndex: best.segIndex,
+      partA: split.partA,
+      partB: split.partB
+    }
+  }
+
   // =========================
   // Draw: novo cabo
   // =========================
@@ -143,7 +247,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     setFiberList((prev) => [
       ...prev,
       {
-        id: Date.now(),
+        id: nextId(),
         nome: form.nome,
         descricao: form.descricao,
         tipoCabo: form.tipoCabo,
@@ -201,7 +305,103 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   }
 
   // =========================
-  // CEO: portas e cabos
+  // Place box (CEO / CTO)
+  // =========================
+  function startPlaceBoxAt(click: LatLng, kind: BoxKind) {
+    const candidate = findPlacementCandidate(click)
+    if (!candidate) {
+      alert("Nao foi possivel posicionar a caixa. Clique mais perto de um cabo.")
+      return
+    }
+
+    setPendingPlacement({
+      kind,
+      sourceFiberId: candidate.sourceFiberId,
+      point: candidate.point,
+      segIndex: candidate.segIndex,
+      partA: candidate.partA,
+      partB: candidate.partB
+    })
+    setOpenBoxSave(true)
+  }
+
+  function cancelPlaceBox() {
+    setOpenBoxSave(false)
+    setPendingPlacement(null)
+  }
+
+  function salvarNovaCaixa(form: BoxFormData) {
+    const draft = pendingPlacement
+    if (!draft) return
+
+    const sourceFiber = fiberList.find((f) => f.id === draft.sourceFiberId)
+    if (!sourceFiber) {
+      alert("O cabo selecionado nao esta mais disponivel. Tente novamente.")
+      cancelPlaceBox()
+      return
+    }
+
+    const caboAId = nextId()
+    const caboBId = nextId()
+    const ceoId = nextId()
+
+    const fibrasOriginais = sourceFiber.fibras?.length ? sourceFiber.fibras : gerarFibras(12)
+
+    const caboA: FiberSegment = { ...sourceFiber, id: caboAId, nome: `${sourceFiber.nome} A`, path: draft.partA, fibras: cloneFibras(fibrasOriginais) }
+    const caboB: FiberSegment = { ...sourceFiber, id: caboBId, nome: `${sourceFiber.nome} B`, path: draft.partB, fibras: cloneFibras(fibrasOriginais) }
+
+    const splitters = form.tipo === "CTO"
+      ? [makeSplitter("1x8", "BALANCED", "PRIMARY", null)]
+      : []
+
+    const novaCaixa: CEO = {
+      id: ceoId,
+      tipo: form.tipo,
+      nome: form.nome,
+      codigo: form.codigo,
+      fabricante: form.fabricante,
+      modelo: form.modelo,
+      origemSinal: form.origemSinal,
+      areaAtendimento: form.areaAtendimento,
+      descricao: form.descricao,
+      position: draft.point,
+      ports: [
+        { id: "IN-1", label: "Entrada", direction: "IN", caboId: caboAId },
+        { id: "OUT-1", label: "Saida 1", direction: "OUT", caboId: caboBId }
+      ],
+      fusoes: [],
+      splitters
+    }
+
+    const cutProg = progressAlongPath(sourceFiber.path, draft.point)
+
+    setCeos((prev) =>
+      prev
+        .map((c0) => {
+          const c = normalizeCEO(c0)
+          const ceoProg = progressAlongPath(sourceFiber.path, c.position)
+          const novoId = ceoProg <= cutProg ? caboAId : caboBId
+
+          const mudou = c.ports.some((p) => p.caboId === sourceFiber.id)
+          if (!mudou) return c
+
+          return {
+            ...c,
+            ports: c.ports.map((p) => (p.caboId === sourceFiber.id ? { ...p, caboId: novoId } : p))
+          }
+        })
+        .concat([novaCaixa])
+    )
+
+    setFiberList((prev) => prev.filter((x) => x.id !== sourceFiber.id).concat([caboA, caboB]))
+    setSelectedFiber(null)
+    setMode(null)
+    setSelectedCEOId(ceoId)
+    cancelPlaceBox()
+  }
+
+  // =========================
+  // CEO/CTO: portas e cabos
   // =========================
   function addOutPort(ceoId: number) {
     setCeos((prev) =>
@@ -211,7 +411,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
         const n = nextOutIndex(c.ports)
         return {
           ...c,
-          ports: [...c.ports, { id: `OUT-${n}`, label: `Saída ${n}`, direction: "OUT", caboId: null }]
+          ports: [...c.ports, { id: `OUT-${n}`, label: `Saida ${n}`, direction: "OUT", caboId: null }]
         }
       })
     )
@@ -223,7 +423,6 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
 
-        // se desconectar, apaga fusões que usavam essa porta
         const nextPorts = c.ports.map((p) => (p.id === portId ? { ...p, caboId } : p))
         const nextFusoes = caboId == null
           ? c.fusoes.filter((f) => f.a.portId !== portId && f.b.portId !== portId)
@@ -247,37 +446,36 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   }
 
   // =========================
-  // CEO: SPLITTERS
+  // Splitters (CEO/CTO)
   // =========================
   function addSplitter(ceoId: number, type: CEOSplitterType, mode: CEOSplitterMode) {
-    const fanout = splitterFanout(type)
-
     setCeos((prev) =>
       prev.map((c0) => {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
 
-        const outputs = Array.from({ length: fanout }, (_, i) => ({
-          leg: i + 1,
-          target: null as SplitterRef | null
-        }))
-
-        const unbalanced =
-          mode === "UNBALANCED"
-            ? Object.fromEntries(outputs.map((o) => [o.leg, Math.round(100 / fanout)]))
-            : undefined
-
-        const s: CEOSplitter = {
-          id: `SPL-${Date.now()}`,
-          type,
-          mode,
-          lossDb: splitterLoss(type),
-          input: null,
-          outputs,
-          unbalanced
+        if (c.tipo === "CTO") {
+          return c
         }
 
-        return { ...c, splitters: [...c.splitters, s] }
+        return { ...c, splitters: [...c.splitters, makeSplitter(type, mode)] }
+      })
+    )
+  }
+
+  function addCTOSecondarySplitter(ceoId: number, type: "1x8" | "1x16", parentLeg: number) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        if (parentLeg < 1 || parentLeg > 8) return c
+
+        const existsOnLeg = c.splitters.some((s) => s.role === "SECONDARY" && s.parentLeg === parentLeg)
+        if (existsOnLeg) return c
+
+        const secondary = makeSplitter(type, "BALANCED", "SECONDARY", parentLeg)
+        return { ...c, splitters: [...c.splitters, secondary] }
       })
     )
   }
@@ -287,6 +485,14 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       prev.map((c0) => {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
+
+        const target = c.splitters.find((s) => s.id === splitterId)
+        if (!target) return c
+
+        if (c.tipo === "CTO" && target.role === "PRIMARY") {
+          return c
+        }
+
         return { ...c, splitters: c.splitters.filter((s) => s.id !== splitterId) }
       })
     )
@@ -297,9 +503,17 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       prev.map((c0) => {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
+
+        const ignored = new Set<string>([`splitter-in-${splitterId}`])
+        if (ref && !isRefAvailable(c, ref, ignored)) return c
+
         return {
           ...c,
-          splitters: c.splitters.map((s) => (s.id === splitterId ? { ...s, input: ref } : s))
+          splitters: c.splitters.map((s) => {
+            if (s.id !== splitterId) return s
+            if (c.tipo === "CTO" && s.role === "SECONDARY") return s
+            return { ...s, input: ref }
+          })
         }
       })
     )
@@ -310,6 +524,20 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       prev.map((c0) => {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
+
+        const targetSplitter = c.splitters.find((s) => s.id === splitterId)
+        if (!targetSplitter) return c
+
+        const ignored = new Set<string>([`splitter-out-${splitterId}-${leg}`])
+        if (ref && !isRefAvailable(c, ref, ignored)) return c
+
+        if (c.tipo === "CTO" && ref && targetSplitter.role === "SECONDARY") {
+          const primaryInput = findPrimarySplitter(c)?.input
+          if (primaryInput && primaryInput.portId === ref.portId && primaryInput.fibraId === ref.fibraId) {
+            return c
+          }
+        }
+
         return {
           ...c,
           splitters: c.splitters.map((s) => {
@@ -342,86 +570,29 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   }
 
   // =========================
-  // CEO: criar CEO ao cortar cabo
-  // =========================
-  function placeCEOAt(click: LatLng) {
-    let best: { fiber: FiberSegment; dist: number; segIndex: number; point: LatLng } | null = null
-
-    for (const f of fiberList) {
-      if (!f.path || f.path.length < 2) continue
-      const closest = findClosestPointOnPath(f.path, click, 25)
-      if (!best || closest.dist < best.dist) best = { fiber: f, dist: closest.dist, segIndex: closest.segIndex, point: closest.point }
-    }
-
-    if (!best) return
-    if (best.dist > 120) return
-
-    const split = splitPathAt(best.fiber.path, { point: best.point, segIndex: best.segIndex })
-    if (!split) return
-
-    const baseId = Date.now()
-    const caboAId = baseId
-    const caboBId = baseId + 1
-    const ceoId = baseId + 2
-
-    const fibrasOriginais = best.fiber.fibras?.length ? best.fiber.fibras : gerarFibras(12)
-
-    const caboA: FiberSegment = { ...best.fiber, id: caboAId, nome: `${best.fiber.nome} A`, path: split.partA, fibras: cloneFibras(fibrasOriginais) }
-    const caboB: FiberSegment = { ...best.fiber, id: caboBId, nome: `${best.fiber.nome} B`, path: split.partB, fibras: cloneFibras(fibrasOriginais) }
-
-    const novaCEO: CEO = {
-      id: ceoId,
-      nome: "CEO",
-      descricao: "Emenda / Derivação",
-      position: best.point,
-      ports: [
-        { id: "IN-1", label: "Entrada", direction: "IN", caboId: caboAId },
-        { id: "OUT-1", label: "Saída 1", direction: "OUT", caboId: caboBId }
-      ],
-      fusoes: [],
-      splitters: []
-    }
-
-    const cutProg = progressAlongPath(best.fiber.path, best.point)
-
-    setCeos((prev) =>
-      prev
-        .map((c0) => {
-          const c = normalizeCEO(c0)
-          const ceoProg = progressAlongPath(best!.fiber.path, c.position)
-          const novoId = ceoProg <= cutProg ? caboAId : caboBId
-
-          const mudou = c.ports.some((p) => p.caboId === best!.fiber.id)
-          if (!mudou) return c
-
-          return {
-            ...c,
-            ports: c.ports.map((p) => (p.caboId === best!.fiber.id ? { ...p, caboId: novoId } : p))
-          }
-        })
-        .concat([novaCEO])
-    )
-
-    setFiberList((prev) => prev.filter((x) => x.id !== best!.fiber.id).concat([caboA, caboB]))
-    setSelectedFiber(null)
-    setMode(null)
-  }
-
-  // =========================
-  // Fusões normais (porta+fibra)
+  // Fusoes normais (porta+fibra)
   // =========================
   function fuseFibers(ceoId: number, aPortId: string, aFibraId: number, bPortId: string, bFibraId: number) {
+    if (aPortId === bPortId && aFibraId === bFibraId) return
+
     setCeos((prev) =>
       prev.map((c0) => {
         const c = normalizeCEO(c0)
         if (c.id !== ceoId) return c
 
-        const jaTem = c.fusoes.some(
+        const jaTemPar = c.fusoes.some(
           (f) =>
-            (f.a.portId === aPortId && f.a.fibraId === aFibraId) ||
-            (f.b.portId === bPortId && f.b.fibraId === bFibraId)
+            (f.a.portId === aPortId && f.a.fibraId === aFibraId && f.b.portId === bPortId && f.b.fibraId === bFibraId) ||
+            (f.a.portId === bPortId && f.a.fibraId === bFibraId && f.b.portId === aPortId && f.b.fibraId === aFibraId)
         )
-        if (jaTem) return c
+        if (jaTemPar) return c
+
+        const refA: SplitterRef = { portId: aPortId, fibraId: aFibraId }
+        const refB: SplitterRef = { portId: bPortId, fibraId: bFibraId }
+
+        const availableA = isRefAvailable(c, refA, new Set<string>())
+        const availableB = isRefAvailable(c, refB, new Set<string>())
+        if (!availableA || !availableB) return c
 
         const nova: CEOFusion = { a: { portId: aPortId, fibraId: aFibraId }, b: { portId: bPortId, fibraId: bFibraId } }
         return { ...c, fusoes: [...c.fusoes, nova] }
@@ -464,10 +635,16 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     openSave,
     setOpenSave,
 
+    openBoxSave,
+    setOpenBoxSave,
+    pendingPlacement,
+    salvarNovaCaixa,
+    cancelPlaceBox,
+
     polylineRefs,
 
     ceos,
-    placeCEOAt,
+    startPlaceBoxAt,
     selectedCEOId,
     setSelectedCEOId,
 
@@ -478,8 +655,8 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     fuseFibers,
     unfuseFibers,
 
-    // splitter
     addSplitter,
+    addCTOSecondarySplitter,
     removeSplitter,
     setSplitterInputRef,
     setSplitterOutputRef,

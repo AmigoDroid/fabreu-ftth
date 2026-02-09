@@ -1,17 +1,10 @@
-// components/map/MapToolbar.tsx
+﻿// components/map/MapToolbar.tsx
 type Props = {
   setDrawingMode: (mode: google.maps.drawing.OverlayType | null) => void
-  onSave: () => void
-  disabledSave: boolean
-  setMode: (m: "draw-fiber" | "place-ceo" | null) => void
+  setMode: (m: "draw-fiber" | "place-ceo" | "place-cto" | null) => void
 }
 
-export function MapToolbar({
-  setDrawingMode,
-  onSave,
-  disabledSave,
-  setMode
-}: Props) {
+export function MapToolbar({ setDrawingMode, setMode }: Props) {
   const btn: React.CSSProperties = {
     background: "transparent",
     border: "none",
@@ -32,7 +25,6 @@ export function MapToolbar({
         borderRadius: 10
       }}
     >
-      {/* Desenhar fibra */}
       <button
         style={btn}
         onClick={() => {
@@ -44,7 +36,6 @@ export function MapToolbar({
         <img src="/icons/fibra.png" width={28} />
       </button>
 
-      {/* Colocar CEO */}
       <button
         style={{
           ...btn,
@@ -57,22 +48,28 @@ export function MapToolbar({
           setMode("place-ceo")
           setDrawingMode(null)
         }}
-        title="Colocar CEO (emenda)"
+        title="Colocar CEO"
       >
         CEO
       </button>
 
-      {/* Salvar edição */}
-      {/*<button
-        style={btn}
-        onClick={onSave}
-        disabled={disabledSave}
-        title="Salvar edição"
+      <button
+        style={{
+          ...btn,
+          padding: "6px 10px",
+          borderRadius: 8,
+          background: "#e8f5ff",
+          fontWeight: 700
+        }}
+        onClick={() => {
+          setMode("place-cto")
+          setDrawingMode(null)
+        }}
+        title="Colocar CTO"
       >
-        <img src="/icons/salve.png" width={28} />
+        CTO
       </button>
-*/}
-      {/* Cancelar */}
+
       <button
         style={{
           ...btn,
@@ -87,7 +84,7 @@ export function MapToolbar({
         }}
         title="Cancelar"
       >
-        Salvar
+        Cancelar
       </button>
     </div>
   )
