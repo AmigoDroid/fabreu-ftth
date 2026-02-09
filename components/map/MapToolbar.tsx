@@ -12,6 +12,20 @@ export function MapToolbar({ setDrawingMode, setMode, mode }: Props) {
     cursor: "pointer"
   }
 
+  function modeBtnStyle(active: boolean, activeBg: string): React.CSSProperties {
+    return {
+      ...btn,
+      padding: "6px 10px",
+      borderRadius: 8,
+      background: active ? activeBg : "#fff",
+      color: active ? "#fff" : "#111",
+      border: active ? "2px solid #111" : "1px solid #ddd",
+      fontWeight: 800,
+      boxShadow: active ? "0 0 0 2px rgba(17,17,17,0.12)" : "none",
+      transform: active ? "translateY(-1px)" : "none"
+    }
+  }
+
   return (
     <div
       style={{
@@ -38,15 +52,7 @@ export function MapToolbar({ setDrawingMode, setMode, mode }: Props) {
       </button>
 
       <button
-        style={{
-          ...btn,
-          padding: "6px 10px",
-          borderRadius: 8,
-          background: mode === "draw-fiber" ? "#111" : "#fff",
-          color: mode === "draw-fiber" ? "#fff" : "#111",
-          border: "1px solid #ddd",
-          fontWeight: 700
-        }}
+        style={modeBtnStyle(mode === "draw-fiber", "#111")}
         onClick={() => {
           if (mode !== "draw-fiber") {
             setMode("draw-fiber")
@@ -63,15 +69,9 @@ export function MapToolbar({ setDrawingMode, setMode, mode }: Props) {
       </button>
 
       <button
-        style={{
-          ...btn,
-          padding: "6px 10px",
-          borderRadius: 8,
-          background: "#f2f2f2",
-          fontWeight: 700
-        }}
+        style={modeBtnStyle(mode === "place-ceo", "#2f6fed")}
         onClick={() => {
-          setMode("place-ceo")
+          setMode(mode === "place-ceo" ? null : "place-ceo")
           setDrawingMode(null)
         }}
         title="Colocar CEO"
@@ -80,15 +80,9 @@ export function MapToolbar({ setDrawingMode, setMode, mode }: Props) {
       </button>
 
       <button
-        style={{
-          ...btn,
-          padding: "6px 10px",
-          borderRadius: 8,
-          background: "#e8f5ff",
-          fontWeight: 700
-        }}
+        style={modeBtnStyle(mode === "place-cto", "#0b5fa5")}
         onClick={() => {
-          setMode("place-cto")
+          setMode(mode === "place-cto" ? null : "place-cto")
           setDrawingMode(null)
         }}
         title="Colocar CTO"
@@ -112,6 +106,20 @@ export function MapToolbar({ setDrawingMode, setMode, mode }: Props) {
       >
         Cancelar
       </button>
+
+      {(mode === "place-ceo" || mode === "place-cto") && (
+        <div
+          style={{
+            marginLeft: 4,
+            alignSelf: "center",
+            fontSize: 12,
+            color: "#333",
+            fontWeight: 700
+          }}
+        >
+          Modo ativo: clique no cabo para adicionar {mode === "place-ceo" ? "CEO" : "CTO"}.
+        </div>
+      )}
     </div>
   )
 }
