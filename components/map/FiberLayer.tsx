@@ -90,7 +90,7 @@ type Props = {
   setSelectedFiber: (f: FiberSegment | null) => void
   polylineRefs: React.MutableRefObject<Record<number, google.maps.Polyline>>
   onSaveEdit: () => void
-  mode: "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
+  mode: "draw-fiber" | "place-pop" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
   activeSignalSource: ActiveSignalSource
   onRequestPlaceBox: (click: { lat: number; lng: number }, sourceFiberId: number) => void
 }
@@ -175,7 +175,7 @@ export function FiberLayer({
               const lng = e.latLng?.lng()
               if (lat == null || lng == null) return
 
-              if (mode && mode !== "draw-fiber") {
+              if (mode && mode !== "draw-fiber" && mode !== "place-pop") {
                 onRequestPlaceBox({ lat, lng }, f.id)
                 return
               }
@@ -277,4 +277,3 @@ export function FiberLayer({
     </>
   )
 }
-

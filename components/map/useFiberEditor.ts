@@ -25,7 +25,7 @@ import { gerarFibras } from "@/components/map/gerarfibras"
 import type { FiberFormData } from "@/components/formInput"
 
 type LatLng = { lat: number; lng: number }
-type Mode = "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
+type Mode = "draw-fiber" | "place-pop" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
 
 type ActiveSignalSource = {
   nodeId: number

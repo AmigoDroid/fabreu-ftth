@@ -5,13 +5,12 @@ import { useState } from "react"
 
 type Props = {
   setDrawingMode: (mode: google.maps.drawing.OverlayType | null) => void
-  setMode: (m: "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null) => void
-  mode: "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
-  onAddPop: () => void
+  setMode: (m: "draw-fiber" | "place-pop" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null) => void
+  mode: "draw-fiber" | "place-pop" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
   leftOffset?: number
 }
 
-export function MapToolbar({ setDrawingMode, setMode, mode, onAddPop, leftOffset = 336 }: Props) {
+export function MapToolbar({ setDrawingMode, setMode, mode, leftOffset = 336 }: Props) {
   const [open, setOpen] = useState(false)
 
   const btn: React.CSSProperties = {
@@ -34,7 +33,7 @@ export function MapToolbar({ setDrawingMode, setMode, mode, onAddPop, leftOffset
   }
 
   return (
-    <div style={{ position: "absolute", top: 10, left: leftOffset, zIndex: 1300, display: "flex", alignItems: "start" }}>
+    <div style={{ position: "absolute", top: 58, left: leftOffset, zIndex: 1550, display: "flex", alignItems: "start" }}>
       <button
         onClick={() => setOpen((v) => !v)}
         title={open ? "Recolher ferramentas" : "Abrir ferramentas"}
@@ -87,11 +86,14 @@ export function MapToolbar({ setDrawingMode, setMode, mode, onAddPop, leftOffset
           </button>
 
           <button
-            style={{ ...btn, padding: "8px 10px", borderRadius: 8, background: "#102a56", border: "1px solid #102a56", color: "#fff", fontWeight: 800, textAlign: "left" }}
-            onClick={onAddPop}
-            title="Adicionar POP na cidade ativa"
+            style={modeBtnStyle(mode === "place-pop", "#102a56")}
+            onClick={() => {
+              setMode(mode === "place-pop" ? null : "place-pop")
+              setDrawingMode(null)
+            }}
+            title="Clique no mapa para posicionar um POP"
           >
-            + Adicionar POP
+            Inserir POP
           </button>
           <button style={modeBtnStyle(mode === "place-ceo", "#2f6fed")} onClick={() => { setMode(mode === "place-ceo" ? null : "place-ceo"); setDrawingMode(null) }}>
             Inserir CEO
@@ -114,9 +116,11 @@ export function MapToolbar({ setDrawingMode, setMode, mode, onAddPop, leftOffset
             Cancelar modo
           </button>
 
-          {(mode === "place-ceo" || mode === "place-cto" || mode === "place-cliente") && (
+          {(mode === "place-pop" || mode === "place-ceo" || mode === "place-cto" || mode === "place-cliente") && (
             <div style={{ fontSize: 11, color: "#475569", borderTop: "1px solid #e2e8f0", paddingTop: 6 }}>
-              Clique no cabo para posicionar {mode === "place-ceo" ? "CEO" : mode === "place-cto" ? "CTO" : "Cliente"}.
+              {mode === "place-pop"
+                ? "Clique em qualquer ponto do mapa para posicionar um POP."
+                : `Clique no cabo para posicionar ${mode === "place-ceo" ? "CEO" : mode === "place-cto" ? "CTO" : "Cliente"}.`}
             </div>
           )}
         </div>

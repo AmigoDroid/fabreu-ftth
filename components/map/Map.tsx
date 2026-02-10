@@ -1,7 +1,7 @@
 ﻿// components/map/Map.tsx
 "use client"
 
-import { GoogleMap, DrawingManager, useLoadScript } from "@react-google-maps/api"
+import { GoogleMap, DrawingManager, Marker, useLoadScript } from "@react-google-maps/api"
 import { useEffect, useMemo, useState } from "react"
 import { getCurrentCoordinates } from "@/util/geolocaton"
 import { PopupSalvar } from "../formInput"
@@ -24,9 +24,14 @@ type Props = {
   drawMode?: boolean
 }
 
+type PopDef = {
+  name: string
+  position?: { lat: number; lng: number }
+}
+
 type CityDef = {
   name: string
-  pops: string[]
+  pops: PopDef[]
 }
 
 type ProjectDef = {
@@ -44,7 +49,19 @@ function normalizeId(raw: string, fallback: string) {
 
 function ensureCity(project: ProjectDef, cityName: string) {
   if (project.cities.some((c) => c.name === cityName)) return project
-  return { ...project, cities: [...project.cities, { name: cityName, pops: ["POP Central"] }] }
+  return { ...project, cities: [...project.cities, { name: cityName, pops: [{ name: "POP Central" }] }] }
+}
+
+function ensurePop(city: CityDef, popName: string, position?: { lat: number; lng: number }) {
+  const exists = city.pops.find((p) => p.name === popName)
+  if (exists) {
+    if (!position) return city
+    return {
+      ...city,
+      pops: city.pops.map((p) => (p.name === popName ? { ...p, position } : p))
+    }
+  }
+  return { ...city, pops: [...city.pops, { name: popName, position }] }
 }
 
 export default function Map({ clients, fibers, drawMode = false }: Props) {
@@ -67,28 +84,30 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
 
       let project = map.get(projectId)!
       project = ensureCity(project, city)
-      const cityRef = project.cities.find((c) => c.name === city)!
-      if (!cityRef.pops.includes(pop)) cityRef.pops.push(pop)
-      map.set(projectId, { ...project })
+      project = {
+        ...project,
+        cities: project.cities.map((c) => (c.name === city ? ensurePop(c, pop) : c))
+      }
+      map.set(projectId, project)
     }
 
     if (map.size === 0) {
       map.set("project-default", {
         id: "project-default",
         name: "Projeto 1",
-        cities: [{ name: "Cidade Base", pops: ["POP Central"] }]
+        cities: [{ name: "Cidade Base", pops: [{ name: "POP Central" }] }]
       })
     }
 
     return [...map.values()].map((p) => {
       if (p.cities.length === 0) {
-        return { ...p, cities: [{ name: "Cidade Base", pops: ["POP Central"] }] }
+        return { ...p, cities: [{ name: "Cidade Base", pops: [{ name: "POP Central" }] }] }
       }
       return {
         ...p,
         cities: p.cities.map((c) => ({
           ...c,
-          pops: c.pops.length ? c.pops : ["POP Central"]
+          pops: c.pops.length ? c.pops : [{ name: "POP Central" }]
         }))
       }
     })
@@ -99,19 +118,21 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
   const [cityFilter, setCityFilter] = useState<string>(CITY_ALL)
   const [popFilter, setPopFilter] = useState<string>(POP_ALL)
   const [workingCity, setWorkingCity] = useState<string>(initialProjects[0]?.cities[0]?.name ?? "Cidade Base")
-  const [workingPop, setWorkingPop] = useState<string>(initialProjects[0]?.cities[0]?.pops[0] ?? "POP Central")
+  const [workingPop, setWorkingPop] = useState<string>(initialProjects[0]?.cities[0]?.pops[0]?.name ?? "POP Central")
   const [newProjectName, setNewProjectName] = useState("")
   const [newCityName, setNewCityName] = useState("")
   const [newPopName, setNewPopName] = useState("")
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
   const activeProject = useMemo(() => projects.find((p) => p.id === activeProjectId) ?? projects[0], [projects, activeProjectId])
-  const cityOptions = useMemo(() => activeProject?.cities ?? [{ name: "Cidade Base", pops: ["POP Central"] }], [activeProject])
+  const cityOptions = useMemo(() => activeProject?.cities ?? [{ name: "Cidade Base", pops: [{ name: "POP Central" }] }], [activeProject])
+  const allPopNames = useMemo(() => [...new Set(cityOptions.flatMap((c) => c.pops.map((p) => p.name)))], [cityOptions])
   const resolvedWorkingCity = cityOptions.some((c) => c.name === workingCity) ? workingCity : (cityOptions[0]?.name ?? "Cidade Base")
-  const popOptions = useMemo(() => cityOptions.find((c) => c.name === resolvedWorkingCity)?.pops ?? ["POP Central"], [cityOptions, resolvedWorkingCity])
-  const resolvedWorkingPop = popOptions.includes(workingPop) ? workingPop : (popOptions[0] ?? "POP Central")
+  const popOptions = useMemo(() => cityOptions.find((c) => c.name === resolvedWorkingCity)?.pops ?? [{ name: "POP Central" }], [cityOptions, resolvedWorkingCity])
+  const popOptionNames = useMemo(() => popOptions.map((p) => p.name), [popOptions])
+  const resolvedWorkingPop = popOptionNames.includes(workingPop) ? workingPop : (popOptionNames[0] ?? "POP Central")
   const resolvedCityFilter = cityFilter === CITY_ALL || cityOptions.some((c) => c.name === cityFilter) ? cityFilter : CITY_ALL
-  const resolvedPopFilter = popFilter === POP_ALL || popOptions.includes(popFilter) ? popFilter : POP_ALL
+  const resolvedPopFilter = popFilter === POP_ALL || allPopNames.includes(popFilter) ? popFilter : POP_ALL
 
   const [center, setCenter] = useState<google.maps.LatLngLiteral | null>(null)
   const fiber = useFiberEditor(fibers, activeProjectId, resolvedWorkingCity, resolvedWorkingPop)
@@ -142,6 +163,18 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     if (resolvedPopFilter !== POP_ALL) list = list.filter((c) => (c.pop ?? "POP Central") === resolvedPopFilter)
     return list
   }, [clients, activeProjectId, resolvedCityFilter, resolvedPopFilter])
+
+  const visiblePops = useMemo(() => {
+    const result: Array<{ city: string; pop: PopDef }> = []
+    for (const city of cityOptions) {
+      if (resolvedCityFilter !== CITY_ALL && city.name !== resolvedCityFilter) continue
+      for (const pop of city.pops) {
+        if (resolvedPopFilter !== POP_ALL && pop.name !== resolvedPopFilter) continue
+        result.push({ city: city.name, pop })
+      }
+    }
+    return result
+  }, [cityOptions, resolvedCityFilter, resolvedPopFilter])
 
   useEffect(() => {
     if (fiber.selectedCEOId == null) return
@@ -176,7 +209,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
       alert("Ja existe um projeto com esse nome.")
       return
     }
-    const next: ProjectDef = { id, name, cities: [{ name: "Cidade Base", pops: ["POP Central"] }] }
+    const next: ProjectDef = { id, name, cities: [{ name: "Cidade Base", pops: [{ name: "POP Central" }] }] }
     setProjects((prev) => [...prev, next])
     setActiveProjectId(id)
     setCityFilter(CITY_ALL)
@@ -192,7 +225,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     setProjects((prev) => prev.map((p) => {
       if (p.id !== activeProjectId) return p
       if (p.cities.some((c) => c.name === city)) return p
-      return { ...p, cities: [...p.cities, { name: city, pops: ["POP Central"] }] }
+      return { ...p, cities: [...p.cities, { name: city, pops: [{ name: "POP Central" }] }] }
     }))
     setWorkingCity(city)
     setWorkingPop("POP Central")
@@ -208,11 +241,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
       if (p.id !== activeProjectId) return p
       return {
         ...p,
-        cities: p.cities.map((c) => {
-          if (c.name !== resolvedWorkingCity) return c
-          if (c.pops.includes(pop)) return c
-          return { ...c, pops: [...c.pops, pop] }
-        })
+        cities: p.cities.map((c) => (c.name === resolvedWorkingCity ? ensurePop(c, pop) : c))
       }
     }))
     setWorkingPop(pop)
@@ -220,29 +249,26 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     setNewPopName("")
   }
 
-  function addPopQuick() {
-    const base = "POP"
-    const existing = new Set(popOptions)
-    let i = popOptions.length + 1
-    let candidate = `${base} ${i}`
-    while (existing.has(candidate)) {
-      i += 1
-      candidate = `${base} ${i}`
-    }
-    setNewPopName(candidate)
+  function placePopAt(lat: number, lng: number) {
+    const existing = popOptionNames.join(", ") || "(nenhum)"
+    const input = window.prompt(`Qual POP deseja posicionar no mapa?\nPOPs da cidade ${resolvedWorkingCity}: ${existing}`, resolvedWorkingPop)
+    if (input == null) return
+    const popName = input.trim()
+    if (!popName) return
+
     setProjects((prev) => prev.map((p) => {
       if (p.id !== activeProjectId) return p
       return {
         ...p,
-        cities: p.cities.map((c) => {
-          if (c.name !== resolvedWorkingCity) return c
-          if (c.pops.includes(candidate)) return c
-          return { ...c, pops: [...c.pops, candidate] }
-        })
+        cities: p.cities.map((c) => (c.name === resolvedWorkingCity ? ensurePop(c, popName, { lat, lng }) : c))
       }
     }))
-    setWorkingPop(candidate)
-    setPopFilter(candidate)
+
+    setWorkingPop(popName)
+    setPopFilter(popName)
+    setNewPopName("")
+    fiber.setMode(null)
+    fiber.setDrawingMode(null)
   }
 
   return (
@@ -304,7 +330,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
             POP
             <select value={resolvedPopFilter} onChange={(e) => setPopFilter(e.target.value)} style={{ border: "1px solid #d6e1ef", borderRadius: 8, padding: "7px 8px" }}>
               <option value={POP_ALL}>Todos os POPs</option>
-              {popOptions.map((pop) => <option key={pop} value={pop}>{pop}</option>)}
+              {allPopNames.map((pop) => <option key={pop} value={pop}>{pop}</option>)}
             </select>
           </label>
         </div>
@@ -322,7 +348,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           <label style={{ display: "grid", gap: 4, marginBottom: 8, fontSize: 12 }}>
             POP de trabalho
             <select value={resolvedWorkingPop} onChange={(e) => setWorkingPop(e.target.value)} style={{ border: "1px solid #d6e1ef", borderRadius: 8, padding: "7px 8px" }}>
-              {popOptions.map((pop) => <option key={pop} value={pop}>{pop}</option>)}
+              {popOptions.map((pop) => <option key={pop.name} value={pop.name}>{pop.name}</option>)}
             </select>
           </label>
 
@@ -343,19 +369,14 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
             {popStats.length === 0 && <div style={{ fontSize: 12, color: "#64748b" }}>Sem elementos mapeados para esta cidade.</div>}
             {popStats.map(([pop, s]) => (
               <div key={pop} style={{ fontSize: 12, border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 8px", background: pop === resolvedWorkingPop ? "#f8fbff" : "#fff" }}>
-                <b>{pop}</b> | OLT: {s.olt} | DIO: {s.dio} | Total nós: {s.total}
+                <b>{pop}</b> | OLT: {s.olt} | DIO: {s.dio} | Total nos: {s.total}
               </div>
             ))}
           </div>
         </div>
-
-        <div style={{ marginTop: 12, fontSize: 11, color: "#475569", borderTop: "1px solid #e2e8f0", paddingTop: 10 }}>
-          Hierarquia de dados: <b>Projeto -&gt; Cidade -&gt; POP -&gt; OLT/DIO/CEO/CTO/Cliente</b>.
-          Novos elementos sao criados sempre em <b>{resolvedWorkingCity} / {resolvedWorkingPop}</b>.
-        </div>
       </aside>
 
-      {drawMode && <MapToolbar setDrawingMode={fiber.setDrawingMode} setMode={fiber.setMode} mode={fiber.mode} onAddPop={addPopQuick} leftOffset={sidebarOpen ? 330 : 0} />}
+      {drawMode && <MapToolbar setDrawingMode={fiber.setDrawingMode} setMode={fiber.setMode} mode={fiber.mode} leftOffset={sidebarOpen ? 330 : 0} />}
 
       {caixaSelecionada && caixaSelecionada.tipo === "CEO" && (
         <CEOEditor
@@ -446,6 +467,15 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         zoom={16}
         mapContainerStyle={{ height: "100vh", marginLeft: sidebarOpen ? 330 : 0 }}
         onClick={(e) => {
+          const lat = e.latLng?.lat()
+          const lng = e.latLng?.lng()
+          if (lat == null || lng == null) return
+
+          if (fiber.mode === "place-pop") {
+            placePopAt(lat, lng)
+            return
+          }
+
           if (
             fiber.mode !== "place-ceo" &&
             fiber.mode !== "place-cto" &&
@@ -453,7 +483,6 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
             fiber.mode !== "place-dio" &&
             fiber.mode !== "place-cliente"
           ) return
-          void e
         }}
       >
         {drawMode && (
@@ -463,6 +492,29 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
             options={{ drawingControl: false }}
           />
         )}
+
+        {visiblePops.map(({ city, pop }) => pop.position ? (
+          <Marker
+            key={`${city}::${pop.name}`}
+            position={pop.position}
+            onClick={() => {
+              setWorkingCity(city)
+              setWorkingPop(pop.name)
+              setCityFilter(city)
+              setPopFilter(pop.name)
+            }}
+            label={{ text: "POP", color: "#fff", fontWeight: "700" }}
+            icon={{
+              path: google.maps.SymbolPath.CIRCLE,
+              fillColor: "#102a56",
+              fillOpacity: 1,
+              strokeColor: "#fff",
+              strokeWeight: 2,
+              scale: 10
+            }}
+            title={`${city} / ${pop.name}`}
+          />
+        ) : null)}
 
         <ClientLayer clients={visibleClients} />
 
@@ -501,4 +553,3 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     </>
   )
 }
-
