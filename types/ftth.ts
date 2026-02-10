@@ -72,6 +72,52 @@ export type CEOSplitter = {
   unbalanced?: Record<number, number>
 }
 
+export type CTOCableTubeSize = 2 | 4 | 6 | 12
+
+export type CTOCableTubeConfig = {
+  cableId: number
+  tubeSize: CTOCableTubeSize
+}
+
+export type CTODropStatus = "PLANEJADO" | "INSTALADO" | "ATIVO" | "MANUTENCAO"
+export type CTOTerminationType = "CONECTOR" | "FIBRA_NUA"
+export type CTOConnectorType = "APC" | "UPC"
+
+export type CTODrop = {
+  id: string
+  splitterId: string
+  leg: number
+  target: SplitterRef | null
+  clientName: string
+  clientCode?: string
+  status: CTODropStatus
+  notes?: string
+}
+
+export type CTOLegConfig = {
+  splitterId: string
+  leg: number
+  termination: CTOTerminationType
+}
+
+export type CTOSplitterConfig = {
+  splitterId: string
+  connectorized: boolean
+  connectorType: CTOConnectorType
+  docName?: string
+  docCode?: string
+  docModel?: string
+  docNotes?: string
+}
+
+export type CTOModel = {
+  cableTubes: CTOCableTubeConfig[]
+  drops: CTODrop[]
+  legConfigs?: CTOLegConfig[]
+  splitterConfigs?: CTOSplitterConfig[]
+  explicitlyUnfed?: boolean
+}
+
 export type CEO = {
   id: number
   tipo: BoxKind
@@ -86,6 +132,7 @@ export type CEO = {
   ports: CEOPort[]
   fusoes: CEOFusion[]
   splitters: CEOSplitter[]
+  ctoModel?: CTOModel
 }
 
 export type Client = {

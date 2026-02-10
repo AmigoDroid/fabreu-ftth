@@ -97,8 +97,16 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
           onAddCTOPrimarySplitter={fiber.addCTOPrimarySplitter}
           onSetSplitterInputRef={fiber.setSplitterInputRef}
           onSetSplitterOutputRef={fiber.setSplitterOutputRef}
+          onSetSplitterLegUnbalanced={fiber.setSplitterLegUnbalanced}
           onAddCTOSecondarySplitter={fiber.addCTOSecondarySplitter}
           onRemoveSplitter={fiber.removeSplitter}
+          onSetCableTubeSize={fiber.setCTOCableTubeSize}
+          onSetSplitterConfig={fiber.setCTOSplitterConfig}
+          onSetLegTermination={fiber.setCTOLegTermination}
+          onSetExplicitlyUnfed={fiber.setCTOExplicitlyUnfed}
+          onAddDrop={fiber.addCTODrop}
+          onUpdateDrop={fiber.updateCTODrop}
+          onRemoveDrop={fiber.removeCTODrop}
         />
       )}
 

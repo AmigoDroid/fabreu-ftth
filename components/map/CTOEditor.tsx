@@ -1,9 +1,10 @@
-"use client"
+﻿"use client"
 
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { CEO, CEOSplitterType, FiberSegment, SplitterRef } from "@/types/ftth"
-
-type Pt = { x: number; y: number }
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
+import { CEO, CEOSplitterMode, CTOConnectorType, CTODropStatus, CTOTerminationType, FiberSegment, SplitterRef } from "@/types/ftth"
+import { CableConnectionsSection } from "./cto-editor/CableConnectionsSection"
+import { chipStyle, dotStyle, legsFromType } from "./cto-editor/utils"
+import { getLegTermination, refKey } from "./cto-editor/physicalModel"
 
 type Props = {
   ceo: CEO
@@ -16,45 +17,51 @@ type Props = {
   onAddCTOPrimarySplitter: (ceoId: number) => void
   onSetSplitterInputRef: (ceoId: number, splitterId: string, ref: SplitterRef | null) => void
   onSetSplitterOutputRef: (ceoId: number, splitterId: string, leg: number, ref: SplitterRef | null) => void
-  onAddCTOSecondarySplitter: (ceoId: number, type: "1x8" | "1x16", parentLeg: number | null) => void
+  onSetSplitterLegUnbalanced: (ceoId: number, splitterId: string, leg: number, percent: number) => void
+  onAddCTOSecondarySplitter: (
+    ceoId: number,
+    type: "1x8" | "1x16",
+    parentLeg: number | null,
+    mode?: CEOSplitterMode,
+    connectorized?: boolean,
+    connectorType?: CTOConnectorType,
+    docs?: Partial<{ docName: string; docCode: string; docModel: string; docNotes: string }>
+  ) => void
   onRemoveSplitter: (ceoId: number, splitterId: string) => void
+  onSetSplitterConfig: (
+    ceoId: number,
+    splitterId: string,
+    patch: Partial<{ connectorized: boolean; connectorType: CTOConnectorType; docName: string; docCode: string; docModel: string; docNotes: string }>
+  ) => void
+  onSetLegTermination: (ceoId: number, splitterId: string, leg: number, termination: CTOTerminationType) => void
+  onSetCableTubeSize: (ceoId: number, cableId: number, tubeSize: 2 | 4 | 6 | 12) => void
+  onSetExplicitlyUnfed: (ceoId: number, explicitlyUnfed: boolean) => void
+  onAddDrop: (ceoId: number, splitterId: string, leg: number, target: SplitterRef | null, clientName: string) => void
+  onUpdateDrop: (
+    ceoId: number,
+    dropId: string,
+    patch: Partial<{ clientName: string; clientCode: string; notes: string; status: CTODropStatus; target: SplitterRef | null }>
+  ) => void
+  onRemoveDrop: (ceoId: number, dropId: string) => void
 }
 
-function fanout(type: CEOSplitterType) {
-  return Number(String(type).replace("1x", ""))
-}
+type Pending =
+  | { splitterId: string; leg: number }
+  | { splitterId: string; input: true }
+  | { cableRef: SplitterRef }
+  | null
+type UiLine = { key: string; from: { x: number; y: number }; to: { x: number; y: number }; color: string }
 
-function legsFromType(type: CEOSplitterType) {
-  return Array.from({ length: fanout(type) }, (_, i) => i + 1)
-}
-
-function chipStyle(color: string, active: boolean, disabled: boolean): React.CSSProperties {
-  return {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 10px",
-    borderRadius: 10,
-    cursor: disabled ? "not-allowed" : "pointer",
-    border: active ? "2px solid #111" : "1px solid #ddd",
-    opacity: disabled ? 0.55 : 1,
-    background: "#fff",
-    userSelect: "none"
+function getSplitterCfg(ceo: CEO, splitterId: string) {
+  return ceo.ctoModel?.splitterConfigs?.find((s) => s.splitterId === splitterId) ?? {
+    splitterId,
+    connectorized: true,
+    connectorType: "APC" as CTOConnectorType,
+    docName: "",
+    docCode: "",
+    docModel: "",
+    docNotes: ""
   }
-}
-
-function dotStyle(color: string): React.CSSProperties {
-  return {
-    width: 16,
-    height: 16,
-    borderRadius: 999,
-    background: color,
-    border: "1px solid #333"
-  }
-}
-
-function refKey(ref: SplitterRef) {
-  return `${ref.portId}::${ref.fibraId}`
 }
 
 export function CTOEditor({
@@ -68,890 +75,527 @@ export function CTOEditor({
   onAddCTOPrimarySplitter,
   onSetSplitterInputRef,
   onSetSplitterOutputRef,
+  onSetSplitterLegUnbalanced,
   onAddCTOSecondarySplitter,
-  onRemoveSplitter
+  onRemoveSplitter,
+  onSetSplitterConfig,
+  onSetLegTermination,
+  onAddDrop,
+  onUpdateDrop,
+  onRemoveDrop
 }: Props) {
-  const outPorts = useMemo(() => ceo.ports.filter((p) => p.direction === "OUT"), [ceo.ports])
-  const inPort = useMemo(() => ceo.ports.find((p) => p.id === "IN-1") ?? null, [ceo.ports])
-  const pluggedPorts = useMemo(() => ceo.ports.filter((p) => p.caboId != null), [ceo.ports])
+  const [tab, setTab] = useState<"FUSOES_SPLITTERS" | "PORTAS_CLIENTES">("FUSOES_SPLITTERS")
+  const [fullscreen, setFullscreen] = useState(false)
+  const [leftPortId, setLeftPortId] = useState<string>(() => ceo.ports.find((p) => p.direction === "IN")?.id ?? "IN-1")
+  const [rightPortId, setRightPortId] = useState<string>(() => ceo.ports.find((p) => p.direction === "OUT")?.id ?? "OUT-1")
+  const [activeSecondaryId, setActiveSecondaryId] = useState<string | null>(null)
+  const [activeLeg, setActiveLeg] = useState(1)
+  const [pending, setPending] = useState<Pending>(null)
+  const [cableToCableMode, setCableToCableMode] = useState(false)
+  const [dropClientName, setDropClientName] = useState("")
 
-  const [tab, setTab] = useState<"SPLICE" | "SPLITTER">("SPLITTER")
-  const [activeOutPortId, setActiveOutPortId] = useState<string>(outPorts[0]?.id ?? "OUT-1")
-  const [selA, setSelA] = useState<number | null>(null)
-  const [selB, setSelB] = useState<number | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [newType, setNewType] = useState<"1x8" | "1x16">("1x8")
+  const [newParentLeg, setNewParentLeg] = useState<number | null>(null)
+  const [newMode, setNewMode] = useState<CEOSplitterMode>("BALANCED")
+  const [newConnectorized, setNewConnectorized] = useState(true)
+  const [newConnectorType, setNewConnectorType] = useState<CTOConnectorType>("APC")
+  const [newDocName, setNewDocName] = useState("")
+  const [newDocCode, setNewDocCode] = useState("")
+  const [newDocModel, setNewDocModel] = useState("")
+  const [newDocNotes, setNewDocNotes] = useState("")
 
+  const [lines, setLines] = useState<UiLine[]>([])
+  const diagramRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+
+  const portsPlugged = useMemo(() => ceo.ports.filter((p) => p.caboId != null), [ceo.ports])
   const cableByPort = useMemo(() => {
     const map = new Map<string, FiberSegment | null>()
-    for (const p of ceo.ports) {
-      const cabo = p.caboId ? fibers.find((f) => f.id === p.caboId) ?? null : null
-      map.set(p.id, cabo)
-    }
+    for (const p of ceo.ports) map.set(p.id, p.caboId ? fibers.find((f) => f.id === p.caboId) ?? null : null)
     return map
   }, [ceo.ports, fibers])
+  const leftCable = useMemo(() => cableByPort.get(leftPortId) ?? null, [cableByPort, leftPortId])
+  const rightCable = useMemo(() => cableByPort.get(rightPortId) ?? null, [cableByPort, rightPortId])
 
   const primary = useMemo(() => ceo.splitters.find((s) => s.role === "PRIMARY") ?? null, [ceo.splitters])
-  const secondaries = useMemo(
-    () => ceo.splitters.filter((s) => s.role === "SECONDARY").sort((a, b) => (a.parentLeg ?? 0) - (b.parentLeg ?? 0)),
-    [ceo.splitters]
-  )
-
-  const [leftPortId, setLeftPortId] = useState<string>(pluggedPorts[0]?.id ?? "IN-1")
-  const [secondaryType, setSecondaryType] = useState<"1x8" | "1x16">("1x8")
-  const [secondaryLeg, setSecondaryLeg] = useState<number | null>(null)
-  const [activeSecondaryId, setActiveSecondaryId] = useState<string | null>(secondaries[0]?.id ?? null)
-  const [activeOutLeg, setActiveOutLeg] = useState<number>(1)
-  const [targetPortId, setTargetPortId] = useState<string>(pluggedPorts[0]?.id ?? "OUT-1")
-
-  const activeSecondary = useMemo(
-    () => (activeSecondaryId ? secondaries.find((s) => s.id === activeSecondaryId) ?? secondaries[0] ?? null : secondaries[0] ?? null),
-    [activeSecondaryId, secondaries]
-  )
-  const allTraySplitters = useMemo(
-    () => ceo.splitters.filter((s) => s.role === "PRIMARY" || s.role === "SECONDARY"),
-    [ceo.splitters]
-  )
-  const [activeTraySplitterId, setActiveTraySplitterId] = useState<string | null>(allTraySplitters[0]?.id ?? null)
-  const [trayOutLeg, setTrayOutLeg] = useState<number>(1)
-
-  const activeTraySplitter = useMemo(
-    () =>
-      activeTraySplitterId
-        ? allTraySplitters.find((s) => s.id === activeTraySplitterId) ?? allTraySplitters[0] ?? null
-        : allTraySplitters[0] ?? null,
-    [activeTraySplitterId, allTraySplitters]
-  )
-  const trayLegs = useMemo(
-    () => (activeTraySplitter ? legsFromType(activeTraySplitter.type) : []),
-    [activeTraySplitter]
-  )
-
-  const activeOutPort = useMemo(() => outPorts.find((p) => p.id === activeOutPortId) ?? null, [outPorts, activeOutPortId])
-
-  const caboIN = useMemo(() => {
-    if (!inPort?.caboId) return null
-    return fibers.find((f) => f.id === inPort.caboId) ?? null
-  }, [fibers, inPort])
-
-  const caboOUT = useMemo(() => {
-    if (!activeOutPort?.caboId) return null
-    return fibers.find((f) => f.id === activeOutPort.caboId) ?? null
-  }, [fibers, activeOutPort])
-
-  const usedIN = useMemo(() => {
-    const s = new Set<number>()
-    for (const f of ceo.fusoes) {
-      if (f.a.portId === "IN-1") s.add(f.a.fibraId)
-      if (f.b.portId === "IN-1") s.add(f.b.fibraId)
-    }
-    return s
-  }, [ceo.fusoes])
-
-  const usedOUTActive = useMemo(() => {
-    const s = new Set<number>()
-    for (const f of ceo.fusoes) {
-      if (f.a.portId === activeOutPortId) s.add(f.a.fibraId)
-      if (f.b.portId === activeOutPortId) s.add(f.b.fibraId)
-    }
-    return s
-  }, [ceo.fusoes, activeOutPortId])
-
-  function tryFuse(aId: number | null, bId: number | null) {
-    if (!aId || !bId) return
-    if (!activeOutPortId) return
-    if (!caboIN || !caboOUT) return
-    if (usedIN.has(aId)) return
-    if (usedOUTActive.has(bId)) return
-    onFuse(ceo.id, "IN-1", aId, activeOutPortId, bId)
-    setSelA(null)
-    setSelB(null)
-  }
+  const secondaries = useMemo(() => ceo.splitters.filter((s) => s.role === "SECONDARY"), [ceo.splitters])
+  const activeSecondary = useMemo(() => secondaries.find((s) => s.id === activeSecondaryId) ?? secondaries[0] ?? null, [secondaries, activeSecondaryId])
 
   const used = useMemo(() => {
     const s = new Set<string>()
-
     for (const f of ceo.fusoes) {
       s.add(`${f.a.portId}::${f.a.fibraId}`)
       s.add(`${f.b.portId}::${f.b.fibraId}`)
     }
-
     for (const spl of ceo.splitters) {
       if (spl.input) s.add(refKey(spl.input))
-      for (const o of spl.outputs) {
-        if (o.target) s.add(refKey(o.target))
-      }
+      for (const o of spl.outputs) if (o.target) s.add(refKey(o.target))
     }
-
     return s
   }, [ceo.fusoes, ceo.splitters])
 
-  const leftCable = leftPortId ? cableByPort.get(leftPortId) ?? null : null
-  const targetCable = targetPortId ? cableByPort.get(targetPortId) ?? null : null
-
-  const freePrimaryLegs = useMemo(() => {
-    const usedLegs = new Set<number>(secondaries.map((s) => s.parentLeg ?? 0))
-    return Array.from({ length: 8 }, (_, i) => i + 1).filter((leg) => !usedLegs.has(leg))
-  }, [secondaries])
-
-  const panel: React.CSSProperties = {
-    position: "absolute",
-    top: 20,
-    right: 20,
-    zIndex: 1000,
-    width: 760,
-    maxHeight: "85vh",
-    overflow: "auto",
-    background: "#fff",
-    borderRadius: 14,
-    border: "1px solid #e5e5e5",
-    boxShadow: "0 12px 30px rgba(0,0,0,0.15)",
-    padding: 14
-  }
-
-  function primaryInputEquals(ref: SplitterRef) {
-    return !!primary?.input && primary.input.portId === ref.portId && primary.input.fibraId === ref.fibraId
-  }
-
-  function refColor(ref: SplitterRef | null) {
-    if (!ref) return "#bbb"
-    const cabo = cableByPort.get(ref.portId)
-    return cabo?.fibras.find((x) => x.id === ref.fibraId)?.cor ?? "#bbb"
-  }
-
-  const getColorIN = useCallback((fibraId: number) => {
-    return caboIN?.fibras.find((x) => x.id === fibraId)?.cor ?? "#111"
-  }, [caboIN?.fibras])
-
-  const fusedInToOut = useMemo(() => {
-    const m = new Map<number, number>()
-    for (const f of ceo.fusoes) {
-      if (f.a.portId === "IN-1" && f.b.portId === activeOutPortId) m.set(f.a.fibraId, f.b.fibraId)
-      if (f.b.portId === "IN-1" && f.a.portId === activeOutPortId) m.set(f.b.fibraId, f.a.fibraId)
-    }
-    return m
-  }, [ceo.fusoes, activeOutPortId])
-
-  const panelRef = useRef<HTMLDivElement | null>(null)
-  const spliceDiagramRef = useRef<HTMLDivElement | null>(null)
-  const [spliceCurves, setSpliceCurves] = useState<Array<{ key: string; a: Pt; b: Pt; color: string }>>([])
+  const sortedSecondaries = useMemo(() => {
+    const arr = [...secondaries]
+    arr.sort((a, b) => {
+      const aCfg = getSplitterCfg(ceo, a.id)
+      const bCfg = getSplitterCfg(ceo, b.id)
+      if (aCfg.connectorized === bCfg.connectorized) return a.id.localeCompare(b.id)
+      return aCfg.connectorized ? 1 : -1
+    })
+    return arr
+  }, [secondaries, ceo])
 
   useLayoutEffect(() => {
-    if (tab !== "SPLICE") return
-    const panelEl = panelRef.current
-    const diagramEl = spliceDiagramRef.current
-    if (!panelEl || !diagramEl) return
-
+    const el = diagramRef.current
+    const panel = panelRef.current
+    if (!el || !panel) return
     let raf = 0
     const calc = () => {
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
-        const baseRect = diagramEl.getBoundingClientRect()
-        const next: Array<{ key: string; a: Pt; b: Pt; color: string }> = []
-
-        for (const [aFibraId, bFibraId] of fusedInToOut.entries()) {
-          const aEl = diagramEl.querySelector<HTMLElement>(`[data-cto-sp-in="${aFibraId}"]`)
-          const bEl = diagramEl.querySelector<HTMLElement>(`[data-cto-sp-out="${bFibraId}"]`)
+        const base = el.getBoundingClientRect()
+        const next: UiLine[] = []
+        for (const s of secondaries) {
+          if (s.input) {
+            const fiberEl = el.querySelector<HTMLElement>(`[data-fiber="${s.input.portId}:${s.input.fibraId}"]`)
+            const pinEl = el.querySelector<HTMLElement>(`[data-spl-in="${s.id}"]`)
+            if (fiberEl && pinEl) {
+              const a = fiberEl.getBoundingClientRect()
+              const b = pinEl.getBoundingClientRect()
+              next.push({ key: `in-${s.id}`, from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 }, to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 }, color: "#2f54eb" })
+            }
+          }
+          for (const o of s.outputs) {
+            if (!o.target) continue
+            const pinEl = el.querySelector<HTMLElement>(`[data-spl-leg="${s.id}:${o.leg}"]`)
+            const fiberEl = el.querySelector<HTMLElement>(`[data-fiber="${o.target.portId}:${o.target.fibraId}"]`)
+            if (pinEl && fiberEl) {
+              const a = pinEl.getBoundingClientRect()
+              const b = fiberEl.getBoundingClientRect()
+              next.push({ key: `out-${s.id}-${o.leg}`, from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 }, to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 }, color: "#13c2c2" })
+            }
+          }
+        }
+        for (let i = 0; i < ceo.fusoes.length; i++) {
+          const f = ceo.fusoes[i]
+          const aEl = el.querySelector<HTMLElement>(`[data-fiber="${f.a.portId}:${f.a.fibraId}"]`)
+          const bEl = el.querySelector<HTMLElement>(`[data-fiber="${f.b.portId}:${f.b.fibraId}"]`)
           if (!aEl || !bEl) continue
-
-          const aRect = aEl.getBoundingClientRect()
-          const bRect = bEl.getBoundingClientRect()
+          const a = aEl.getBoundingClientRect()
+          const b = bEl.getBoundingClientRect()
           next.push({
-            key: `cto-sp-${ceo.id}-${activeOutPortId}-${aFibraId}-${bFibraId}`,
-            a: { x: aRect.right - baseRect.left, y: aRect.top - baseRect.top + aRect.height / 2 },
-            b: { x: bRect.left - baseRect.left, y: bRect.top - baseRect.top + bRect.height / 2 },
-            color: getColorIN(aFibraId)
+            key: `fuse-${i}-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`,
+            from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 },
+            to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 },
+            color: "#fa8c16"
           })
         }
-
-        setSpliceCurves(next)
+        setLines(next)
       })
     }
-
     calc()
     const onScroll = () => calc()
-    panelEl.addEventListener("scroll", onScroll, { passive: true })
-    window.addEventListener("resize", calc, { passive: true })
-    const ro = new ResizeObserver(() => calc())
-    ro.observe(diagramEl)
-
+    panel.addEventListener("scroll", onScroll, { passive: true })
+    window.addEventListener("resize", calc)
+    const ro = new ResizeObserver(calc)
+    ro.observe(el)
     return () => {
       cancelAnimationFrame(raf)
-      panelEl.removeEventListener("scroll", onScroll)
+      panel.removeEventListener("scroll", onScroll)
       window.removeEventListener("resize", calc)
       ro.disconnect()
     }
-  }, [tab, fusedInToOut, ceo.id, activeOutPortId, getColorIN])
+  }, [secondaries, ceo])
 
-  const effectiveTrayOutLeg = useMemo(
-    () => (trayLegs.includes(trayOutLeg) ? trayOutLeg : trayLegs[0] ?? 1),
-    [trayLegs, trayOutLeg]
-  )
+  function handleFiberClick(portId: string, fibraId: number) {
+    const ref: SplitterRef = { portId, fibraId }
+    if (!pending) return
+    if ("cableRef" in pending) {
+      if (pending.cableRef.portId === portId && pending.cableRef.fibraId === fibraId) {
+        setPending(null)
+        return
+      }
+      const kA = refKey(pending.cableRef)
+      const kB = refKey(ref)
+      if (used.has(kA) || used.has(kB)) {
+        setPending(null)
+        setCableToCableMode(false)
+        return
+      }
+      onFuse(ceo.id, pending.cableRef.portId, pending.cableRef.fibraId, portId, fibraId)
+      setPending(null)
+      setCableToCableMode(false)
+      return
+    }
+    if ("input" in pending) {
+      const s = ceo.splitters.find((x) => x.id === pending.splitterId)
+      const active = s?.input?.portId === portId && s?.input?.fibraId === fibraId
+      const busy = used.has(refKey(ref)) && !active
+      if (!busy) onSetSplitterInputRef(ceo.id, pending.splitterId, ref)
+      setPending(null)
+      return
+    }
+    const s = ceo.splitters.find((x) => x.id === pending.splitterId)
+    const current = s?.outputs.find((o) => o.leg === pending.leg)?.target
+    const active = current?.portId === portId && current?.fibraId === fibraId
+    const busy = used.has(refKey(ref)) && !active
+    if (!busy) onSetSplitterOutputRef(ceo.id, pending.splitterId, pending.leg, ref)
+    setPending(null)
+  }
+
+  function startCableToCableFrom(ref: SplitterRef) {
+    if (!cableToCableMode) return
+    if (used.has(refKey(ref))) return
+    setPending({ cableRef: ref })
+  }
+
+  function openAddDialog() {
+    setDialogOpen(true)
+    setNewType("1x8")
+    setNewParentLeg(null)
+    setNewMode("BALANCED")
+    setNewConnectorized(true)
+    setNewConnectorType("APC")
+    setNewDocName("")
+    setNewDocCode("")
+    setNewDocModel("")
+    setNewDocNotes("")
+  }
+
+  function confirmAddSplitter() {
+    onAddCTOSecondarySplitter(ceo.id, newType, newParentLeg, newMode, newConnectorized, newConnectorType, {
+      docName: newDocName,
+      docCode: newDocCode,
+      docModel: newDocModel,
+      docNotes: newDocNotes
+    })
+    setDialogOpen(false)
+  }
+
+  const splittersForPorts = useMemo(() => secondaries.filter((s) => {
+    const cfg = getSplitterCfg(ceo, s.id)
+    return s.mode === "BALANCED" && cfg.connectorized
+  }), [secondaries, ceo])
+
+  const panelStyle: React.CSSProperties = fullscreen
+    ? { position: "fixed", inset: 12, zIndex: 1500, background: "#fff", border: "1px solid #e5e5e5", borderRadius: 14, boxShadow: "0 12px 30px rgba(0,0,0,0.2)", overflow: "auto", padding: 14 }
+    : { position: "absolute", top: 20, right: 20, zIndex: 1000, width: 1180, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 14, border: "1px solid #e5e5e5", boxShadow: "0 12px 30px rgba(0,0,0,0.15)", padding: 14 }
 
   return (
-    <div ref={panelRef} style={panel}>
+    <div ref={panelRef} style={panelStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10 }}>
         <div>
           <div style={{ fontWeight: 900, fontSize: 16 }}>{ceo.nome} (CTO)</div>
           <div style={{ fontSize: 12, color: "#555" }}>{ceo.descricao}</div>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-            Codigo: <b>{ceo.codigo ?? "-"}</b> | Origem: <b>{ceo.origemSinal ?? "-"}</b> | Atendimento: <b>{ceo.areaAtendimento ?? "-"}</b>
-          </div>
           <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-            <button
-              onClick={() => setTab("SPLICE")}
-              style={{
-                border: "1px solid #ddd",
-                background: tab === "SPLICE" ? "#111" : "#fff",
-                color: tab === "SPLICE" ? "#fff" : "#111",
-                borderRadius: 10,
-                padding: "6px 10px",
-                cursor: "pointer",
-                fontWeight: 900
-              }}
-            >
-              Fusoes
-            </button>
-            <button
-              onClick={() => setTab("SPLITTER")}
-              style={{
-                border: "1px solid #ddd",
-                background: tab === "SPLITTER" ? "#111" : "#fff",
-                color: tab === "SPLITTER" ? "#fff" : "#111",
-                borderRadius: 10,
-                padding: "6px 10px",
-                cursor: "pointer",
-                fontWeight: 900
-              }}
-            >
-              Splitters CTO
-            </button>
+            <button onClick={() => setTab("FUSOES_SPLITTERS")} style={{ border: "1px solid #ddd", background: tab === "FUSOES_SPLITTERS" ? "#111" : "#fff", color: tab === "FUSOES_SPLITTERS" ? "#fff" : "#111", borderRadius: 10, padding: "6px 10px", cursor: "pointer", fontWeight: 900 }}>Aba 1: Fusoes e Splitters</button>
+            <button onClick={() => setTab("PORTAS_CLIENTES")} style={{ border: "1px solid #ddd", background: tab === "PORTAS_CLIENTES" ? "#111" : "#fff", color: tab === "PORTAS_CLIENTES" ? "#fff" : "#111", borderRadius: 10, padding: "6px 10px", cursor: "pointer", fontWeight: 900 }}>Aba 2: Portas e Clientes</button>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-        >
-          Fechar
-        </button>
-      </div>
-
-      <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-          <div style={{ fontWeight: 900 }}>Cabos na CTO</div>
-          <button
-            onClick={() => onAddOutPort(ceo.id)}
-            style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-          >
-            + Saida
-          </button>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
-          <div style={{ width: 90, fontWeight: 900 }}>Entrada</div>
-          <select
-            value={inPort?.caboId ?? ""}
-            onChange={(e) => onConnectCable(ceo.id, "IN-1", e.target.value ? Number(e.target.value) : null)}
-            style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-          >
-            <option value="">- sem cabo -</option>
-            {fibers.map((f) => (
-              <option key={f.id} value={f.id}>{f.nome}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-          {outPorts.map((p) => (
-            <div key={p.id} style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <button
-                onClick={() => setActiveOutPortId(p.id)}
-                style={{
-                  width: 90,
-                  borderRadius: 10,
-                  padding: "6px 8px",
-                  border: "1px solid #ddd",
-                  cursor: "pointer",
-                  background: p.id === activeOutPortId ? "#111" : "#fff",
-                  color: p.id === activeOutPortId ? "#fff" : "#111",
-                  fontWeight: 900
-                }}
-              >
-                {p.label}
-              </button>
-              <select
-                value={p.caboId ?? ""}
-                onChange={(e) => onConnectCable(ceo.id, p.id, e.target.value ? Number(e.target.value) : null)}
-                style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-              >
-                <option value="">- sem cabo -</option>
-                {fibers.map((f) => (
-                  <option key={f.id} value={f.id}>{f.nome}</option>
-                ))}
-              </select>
-            </div>
-          ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setFullscreen((v) => !v)} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>{fullscreen ? "Sair tela cheia" : "Tela cheia"}</button>
+          <button onClick={onClose} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>Fechar</button>
         </div>
       </div>
 
-      {tab === "SPLICE" && (
-        <div ref={spliceDiagramRef} style={{ position: "relative", marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+      <CableConnectionsSection
+        ceoId={ceo.id}
+        inPort={ceo.ports.find((p) => p.id === "IN-1") ?? null}
+        outPorts={ceo.ports.filter((p) => p.direction === "OUT")}
+        activeOutPortId={rightPortId}
+        fibers={fibers}
+        onAddOutPort={onAddOutPort}
+        onConnectCable={onConnectCable}
+        onSetActiveOutPortId={setRightPortId}
+      />
+
+      {tab === "FUSOES_SPLITTERS" && (
+        <div ref={diagramRef} style={{ marginTop: 12, position: "relative", border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
           <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }}>
-            {spliceCurves.map((ln) => {
-              const mid = (ln.b.x - ln.a.x) * 0.35
-              const d = `M ${ln.a.x} ${ln.a.y} C ${ln.a.x + mid} ${ln.a.y}, ${ln.b.x - mid} ${ln.b.y}, ${ln.b.x} ${ln.b.y}`
-              return <path key={ln.key} d={d} fill="none" stroke={ln.color} strokeWidth={3} strokeLinecap="round" opacity={0.92} />
+            {lines.map((l) => {
+              const mid = (l.to.x - l.from.x) * 0.35
+              const d = `M ${l.from.x} ${l.from.y} C ${l.from.x + mid} ${l.from.y}, ${l.to.x - mid} ${l.to.y}, ${l.to.x} ${l.to.y}`
+              return <path key={l.key} d={d} fill="none" stroke={l.color} strokeWidth={3} strokeLinecap="round" opacity={0.9} />
             })}
           </svg>
-          <div style={{ position: "relative", zIndex: 2, fontWeight: 900, marginBottom: 8 }}>Fusoes de passagem (IN para OUT)</div>
-          <div style={{ position: "relative", zIndex: 2, display: "grid", gridTemplateColumns: "1fr 44px 1fr", gap: 12, alignItems: "start" }}>
+
+          <div style={{ position: "relative", zIndex: 2, display: "grid", gridTemplateColumns: "1fr 1.2fr 1fr", gap: 12 }}>
             <div>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                IN-1 {caboIN ? `| ${caboIN.nome}` : "| sem cabo"}
-              </div>
-              {!caboIN ? (
-                <div style={{ fontSize: 12, color: "#666" }}>Conecte um cabo na entrada para criar fusoes.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {caboIN.fibras.map((f) => {
-                    const active = selA === f.id
-                    const disabled = usedIN.has(f.id)
-                    return (
-                      <div
-                        key={`in-${f.id}`}
-                        data-cto-sp-in={f.id}
-                        style={chipStyle(f.cor, active, disabled)}
-                        onClick={() => {
-                          if (disabled) return
-                          const next = active ? null : f.id
-                          setSelA(next)
-                          tryFuse(next, selB)
-                        }}
-                      >
-                        <span style={dotStyle(f.cor)} />
-                        <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
-                        <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
-                          {disabled ? "fusionada" : active ? "selecionada" : "-"}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "grid", placeItems: "center", paddingTop: 6 }}>
-              <div style={{ width: 30, height: 160, border: "2px solid #111", borderRadius: 10, background: "#fff" }} />
-            </div>
-
-            <div>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                {activeOutPortId} {caboOUT ? `| ${caboOUT.nome}` : "| sem cabo"}
-              </div>
-              {!caboOUT ? (
-                <div style={{ fontSize: 12, color: "#666" }}>Conecte um cabo na saida ativa para criar fusoes.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {caboOUT.fibras.map((f) => {
-                    const active = selB === f.id
-                    const disabled = usedOUTActive.has(f.id)
-                    return (
-                      <div
-                        key={`out-${activeOutPortId}-${f.id}`}
-                        data-cto-sp-out={f.id}
-                        style={chipStyle(f.cor, active, disabled)}
-                        onClick={() => {
-                          if (disabled) return
-                          const next = active ? null : f.id
-                          setSelB(next)
-                          tryFuse(selA, next)
-                        }}
-                      >
-                        <span style={dotStyle(f.cor)} />
-                        <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
-                        <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
-                          {disabled ? "fusionada" : active ? "selecionada" : "-"}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-            Dica: essa fusao permite retorno de fibra para atendimento via outra CEO/CTO no caminho.
-          </div>
-
-          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-            {ceo.fusoes.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#666" }}>
-                Selecione uma fibra do IN-1 e uma da saida ativa para criar a fusao.
-              </div>
-            ) : (
-              ceo.fusoes.map((f, idx) => (
-                <div
-                  key={`${idx}-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    padding: 10,
-                    border: "1px solid #eee",
-                    borderRadius: 12
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>Cabo esquerdo (entrada/fonte)</div>
+              <div style={{ marginBottom: 8, display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => {
+                    setCableToCableMode((v) => !v)
+                    setPending(null)
                   }}
+                  style={{ border: "1px solid #ddd", borderRadius: 8, background: cableToCableMode ? "#111" : "#fff", color: cableToCableMode ? "#fff" : "#111", cursor: "pointer", padding: "4px 8px", fontSize: 12 }}
                 >
-                  <div style={{ fontSize: 13 }}>
-                    <b>{f.a.portId}</b>:<b>{f.a.fibraId}</b> <span>{"<->"}</span> <b>{f.b.portId}</b>:<b>{f.b.fibraId}</b>
-                  </div>
-                  <button
-                    onClick={() => onUnfuse(ceo.id, f.a.portId, f.a.fibraId, f.b.portId, f.b.fibraId)}
-                    style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-                  >
-                    Desfazer
-                  </button>
+                  Modo fusao cabo-cabo
+                </button>
+              </div>
+              <select value={leftPortId} onChange={(e) => setLeftPortId(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd", marginBottom: 8 }}>
+                {portsPlugged.map((p) => <option key={p.id} value={p.id}>{p.label} ({p.id})</option>)}
+              </select>
+              {!leftCable ? <div style={{ fontSize: 12, color: "#666" }}>Sem cabo.</div> : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 6 }}>
+                  {leftCable.fibras.map((f) => {
+                    const ref: SplitterRef = { portId: leftPortId, fibraId: f.id }
+                    const busy = used.has(refKey(ref))
+                    const activeCablePick = Boolean(pending && "cableRef" in pending && pending.cableRef.portId === leftPortId && pending.cableRef.fibraId === f.id)
+                    return (
+                      <div
+                        key={f.id}
+                        data-fiber={`${leftPortId}:${f.id}`}
+                        style={chipStyle(activeCablePick, busy && pending == null)}
+                        onClick={() => {
+                          if (cableToCableMode && !pending) startCableToCableFrom(ref)
+                          else handleFiberClick(leftPortId, f.id)
+                        }}
+                      >
+                        <span style={dotStyle(f.cor)} />F{f.id}
+                      </div>
+                    )
+                  })}
                 </div>
-              ))
-            )}
+              )}
+            </div>
+
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontWeight: 900 }}>Splitters desenhados</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {!primary && <button onClick={() => onAddCTOPrimarySplitter(ceo.id)} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>+ Primario</button>}
+                  <button onClick={openAddDialog} style={{ border: "1px solid #ddd", background: "#111", color: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>+ Add Splitter</button>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {sortedSecondaries.map((s) => {
+                  const cfg = getSplitterCfg(ceo, s.id)
+                  return (
+                    <div key={s.id} style={{ width: 300, border: "1px solid #ddd", borderRadius: 12, padding: 8, background: activeSecondary?.id === s.id ? "#fafafa" : "#fff" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <button onClick={() => setActiveSecondaryId(s.id)} style={{ border: "1px solid #ddd", borderRadius: 8, background: activeSecondary?.id === s.id ? "#111" : "#fff", color: activeSecondary?.id === s.id ? "#fff" : "#111", padding: "4px 8px", fontWeight: 900, cursor: "pointer" }}>
+                          {s.type} {cfg.connectorized ? `[${cfg.connectorType}]` : "[FUSIVEL]"}
+                        </button>
+                        <button onClick={() => onRemoveSplitter(ceo.id, s.id)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer" }}>Remover</button>
+                      </div>
+                      <div style={{ marginTop: 4, fontSize: 11, color: "#666" }}>
+                        Doc: {cfg.docName || "-"} | Cod: {cfg.docCode || "-"} | Mod: {cfg.docModel || "-"}
+                      </div>
+                      <div style={{ marginTop: 6, border: "1px solid #eee", borderRadius: 8, padding: 6 }}>
+                        <svg width="100%" height="74" viewBox="0 0 280 74">
+                          <rect x="95" y="8" width="90" height="58" rx="10" fill="#fff" stroke="#111" strokeWidth="2" />
+                          <text x="140" y="32" textAnchor="middle" fontSize="12" fontWeight="700">{s.type}</text>
+                          <text x="140" y="47" textAnchor="middle" fontSize="9" fill="#666">{s.mode}</text>
+                          <circle cx="80" cy="37" r="5" fill="#fff" stroke="#111" strokeWidth="2" />
+                          <line x1="85" y1="37" x2="95" y2="37" stroke="#111" strokeWidth="2" />
+                          {legsFromType(s.type).slice(0, 8).map((leg, idx) => {
+                            const y = 13 + idx * 7.2
+                            return <line key={leg} x1="185" y1={y} x2="198" y2={y} stroke="#111" strokeWidth="1.5" />
+                          })}
+                        </svg>
+                      </div>
+                      <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
+                        <button data-spl-in={s.id} onClick={() => setPending({ splitterId: s.id, input: true })} style={{ border: "1px solid #ddd", borderRadius: 8, background: pending && "input" in pending && pending.splitterId === s.id ? "#111" : "#fff", color: pending && "input" in pending && pending.splitterId === s.id ? "#fff" : "#111", cursor: "pointer", padding: "4px 8px" }}>IN</button>
+                        <button onClick={() => onSetSplitterInputRef(ceo.id, s.id, null)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px" }}>Limpar IN</button>
+                        <button onClick={() => onSetSplitterConfig(ceo.id, s.id, { connectorized: !cfg.connectorized })} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px" }}>{cfg.connectorized ? "Cortar base" : "Conectorizar"}</button>
+                      </div>
+                      <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 6 }}>
+                        {legsFromType(s.type).map((leg) => {
+                          const term = getLegTermination(ceo.ctoModel, s.id, leg)
+                          const tgt = s.outputs.find((o) => o.leg === leg)?.target
+                          const active = Boolean(
+                            pending &&
+                            !("input" in pending) &&
+                            "splitterId" in pending &&
+                            pending.splitterId === s.id &&
+                            pending.leg === leg
+                          )
+                          return (
+                            <div key={leg} style={{ border: active ? "2px solid #111" : "1px solid #ddd", borderRadius: 8, padding: 4 }}>
+                              <div style={{ fontSize: 10, fontWeight: 900 }}>OUT {leg}</div>
+                              <button data-spl-leg={`${s.id}:${leg}`} onClick={() => {
+                                setActiveSecondaryId(s.id)
+                                setActiveLeg(leg)
+                                if (term === "FIBRA_NUA") setPending({ splitterId: s.id, leg })
+                              }} style={{ marginTop: 2, width: "100%", border: "1px solid #ddd", borderRadius: 6, background: term === "CONECTOR" ? "#fafafa" : "#fff", cursor: term === "CONECTOR" ? "default" : "pointer", fontSize: 10 }}>
+                                {term === "CONECTOR" ? `CON ${cfg.connectorType}` : "FUSIONAR"}
+                              </button>
+                              <button onClick={() => {
+                                const next = term === "CONECTOR" ? "FIBRA_NUA" : "CONECTOR"
+                                onSetLegTermination(ceo.id, s.id, leg, next)
+                                if (next === "CONECTOR") onSetSplitterOutputRef(ceo.id, s.id, leg, null)
+                              }} style={{ marginTop: 2, width: "100%", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 10 }}>
+                                {term === "CONECTOR" ? "Cortar" : "Repor conector"}
+                              </button>
+                              <div style={{ marginTop: 2, fontSize: 9, color: "#666" }}>{tgt ? `${tgt.portId} F${tgt.fibraId}` : "-"}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {s.mode === "UNBALANCED" && (
+                        <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 6, display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 4 }}>
+                          {s.outputs.map((o) => (
+                            <label key={o.leg} style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 4 }}>
+                              {o.leg}
+                              <input type="number" min={0} max={100} value={s.unbalanced?.[o.leg] ?? 0} onChange={(e) => onSetSplitterLegUnbalanced(ceo.id, s.id, o.leg, Number(e.target.value || 0))} style={{ width: 50, border: "1px solid #ddd", borderRadius: 6, padding: "2px 4px" }} />
+                              %
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              {pending && <div style={{ marginTop: 8, fontSize: 12, color: "#a8071a" }}>
+                {"cableRef" in pending
+                  ? `Fusao cabo-cabo ativa: origem ${pending.cableRef.portId} F${pending.cableRef.fibraId}. Clique no destino.`
+                  : "Modo mouse ativo: clique em uma fibra para concluir a ligação."}
+              </div>}
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>Cabo de saida (direita)</div>
+              <select value={rightPortId} onChange={(e) => setRightPortId(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd", marginBottom: 8 }}>
+                {portsPlugged.map((p) => <option key={p.id} value={p.id}>{p.label} ({p.id})</option>)}
+              </select>
+              {!rightCable ? <div style={{ fontSize: 12, color: "#666" }}>Sem cabo.</div> : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 6 }}>
+                  {rightCable.fibras.map((f) => {
+                    const ref: SplitterRef = { portId: rightPortId, fibraId: f.id }
+                    const busy = used.has(refKey(ref))
+                    const activeCablePick = Boolean(pending && "cableRef" in pending && pending.cableRef.portId === rightPortId && pending.cableRef.fibraId === f.id)
+                    return (
+                      <div
+                        key={f.id}
+                        data-fiber={`${rightPortId}:${f.id}`}
+                        style={chipStyle(activeCablePick, busy && pending == null)}
+                        onClick={() => {
+                          if (cableToCableMode && !pending) startCableToCableFrom(ref)
+                          else handleFiberClick(rightPortId, f.id)
+                        }}
+                      >
+                        <span style={dotStyle(f.cor)} />F{f.id}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 10, border: "1px solid #eee", borderRadius: 12, padding: 10 }}>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>Fusoes existentes (porta-fibra)</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {ceo.fusoes.length === 0 ? <div style={{ fontSize: 12, color: "#666" }}>Nenhuma fusao.</div> : ceo.fusoes.map((f, i) => (
+                <div key={`${i}-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`} style={{ display: "flex", justifyContent: "space-between", border: "1px solid #eee", borderRadius: 8, padding: 6 }}>
+                  <div style={{ fontSize: 12 }}>{f.a.portId}:F{f.a.fibraId} {"<->"} {f.b.portId}:F{f.b.fibraId}</div>
+                  <button onClick={() => onUnfuse(ceo.id, f.a.portId, f.a.fibraId, f.b.portId, f.b.fibraId)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer" }}>Desfazer</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
-      {tab === "SPLITTER" && (
-        <>
-          <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>Splitter primario 1x8</div>
-
-            {!primary ? (
-              <div style={{ border: "1px dashed #ddd", borderRadius: 10, padding: 10 }}>
-                <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
-                  Sem splitter primario na CTO. Ele e opcional.
-                </div>
-                <button
-                  onClick={() => onAddCTOPrimarySplitter(ceo.id)}
-                  style={{ border: "1px solid #ddd", background: "#111", color: "#fff", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontWeight: 900 }}
-                >
-                  + Adicionar primario 1x8
-                </button>
-              </div>
-            ) : (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>Porta de origem do sinal</div>
-                    <select
-                      value={leftPortId}
-                      onChange={(e) => setLeftPortId(e.target.value)}
-                      style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-                    >
-                      {pluggedPorts.map((p) => (
-                        <option key={p.id} value={p.id}>{p.label} ({p.id})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ fontSize: 12, color: "#666" }}>
-                    Entrada atual: <b>{primary.input ? `${primary.input.portId} / Fibra ${primary.input.fibraId}` : "nao definida"}</b>
-                  </div>
-                </div>
-
-                {!leftCable ? (
-                  <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>Selecione uma porta plugada para definir a entrada.</div>
-                ) : (
-                  <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    {leftCable.fibras.map((f) => {
-                      const ref: SplitterRef = { portId: leftPortId, fibraId: f.id }
-                      const active = primary.input?.portId === ref.portId && primary.input?.fibraId === ref.fibraId
-                      const busy = used.has(refKey(ref)) && !active
-
-                      return (
-                        <div
-                          key={`${leftPortId}-${f.id}`}
-                          style={chipStyle(f.cor, active, busy)}
-                          onClick={() => {
-                            if (busy) return
-                            onSetSplitterInputRef(ceo.id, primary.id, ref)
-                          }}
-                        >
-                          <span style={dotStyle(f.cor)} />
-                          <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
-                          <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>{active ? "IN" : busy ? "ocupada" : "-"}</div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-
-                <button
-                  onClick={() => onSetSplitterInputRef(ceo.id, primary.id, null)}
-                  style={{ marginTop: 10, border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-                >
-                  Limpar entrada primario
-                </button>
-
-                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
-                  {Array.from({ length: 8 }, (_, i) => i + 1).map((leg) => {
-                    const sec = secondaries.find((s) => s.parentLeg === leg)
-                    return (
-                      <div key={leg} style={{ border: "1px solid #eee", borderRadius: 10, padding: 8 }}>
-                        <div style={{ fontWeight: 900, fontSize: 12 }}>Perna {leg}</div>
-                        <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-                          {sec ? `${sec.type} (${sec.id})` : "sem secundario"}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-
-          <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>Splitters secundarios (atendimento)</div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 160px", gap: 10, alignItems: "end" }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>Tipo</div>
-                <select
-                  value={secondaryType}
-                  onChange={(e) => setSecondaryType(e.target.value as "1x8" | "1x16")}
-                  style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-                >
-                  <option value="1x8">1x8</option>
-                  <option value="1x16">1x16</option>
-                </select>
-              </div>
-
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>Perna do primario</div>
-                <select
-                  value={secondaryLeg == null ? "" : String(secondaryLeg)}
-                  onChange={(e) => setSecondaryLeg(e.target.value ? Number(e.target.value) : null)}
-                  style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-                >
-                  <option value="">Sem primario (entrada por fusao)</option>
-                  {freePrimaryLegs.map((leg) => (
-                    <option key={leg} value={leg}>Perna {leg}</option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                onClick={() => onAddCTOSecondarySplitter(ceo.id, secondaryType, secondaryLeg)}
-                disabled={freePrimaryLegs.length === 0}
-                style={{ border: "1px solid #ddd", background: "#111", color: "#fff", borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontWeight: 900 }}
-              >
-                + Adicionar
-              </button>
-            </div>
-
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {secondaries.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setActiveSecondaryId(s.id)}
-                  style={{
-                    border: "1px solid #ddd",
-                    background: s.id === activeSecondaryId ? "#111" : "#fff",
-                    color: s.id === activeSecondaryId ? "#fff" : "#111",
-                    borderRadius: 999,
-                    padding: "6px 10px",
-                    cursor: "pointer",
-                    fontWeight: 900
-                  }}
-                >
-                  {s.type} | P{String(s.parentLeg ?? "-")}
+      {tab === "PORTAS_CLIENTES" && (
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Portas de atendimento (somente balanceado + conectorizado)</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {splittersForPorts.map((s) => (
+                <button key={s.id} onClick={() => setActiveSecondaryId(s.id)} style={{ border: "1px solid #ddd", background: s.id === activeSecondary?.id ? "#111" : "#fff", color: s.id === activeSecondary?.id ? "#fff" : "#111", borderRadius: 999, padding: "6px 10px", cursor: "pointer", fontWeight: 900 }}>
+                  {s.type} ({getSplitterCfg(ceo, s.id).connectorType})
                 </button>
               ))}
             </div>
-
-            {!activeSecondary ? (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>Selecione um secundario para conectar atendimento.</div>
-            ) : (
-              <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                  <div style={{ fontWeight: 900 }}>
-                    Secundario {activeSecondary.type} na perna {activeSecondary.parentLeg}
-                  </div>
-                  <button
-                    onClick={() => {
-                      onRemoveSplitter(ceo.id, activeSecondary.id)
-                      setActiveSecondaryId((prev) => (prev === activeSecondary.id ? null : prev))
-                    }}
-                    style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-                  >
-                    Remover
+            {!activeSecondary ? <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>Selecione um splitter elegivel.</div> : (
+              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8 }}>
+                {legsFromType(activeSecondary.type).map((leg) => (
+                  <button key={leg} onClick={() => setActiveLeg(leg)} style={{ border: activeLeg === leg ? "2px solid #111" : "1px solid #ddd", borderRadius: 10, background: "#fff", padding: 8, cursor: "pointer", textAlign: "left" }}>
+                    <div style={{ fontWeight: 900, fontSize: 12 }}>OUT {leg}</div>
+                    <div style={{ fontSize: 11, color: "#666" }}>{activeSecondary.outputs.find((o) => o.leg === leg)?.target ? "Ligada" : "Livre"}</div>
                   </button>
-                </div>
-
-                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>Perna de saida ativa</div>
-                    <select
-                      value={activeOutLeg}
-                      onChange={(e) => setActiveOutLeg(Number(e.target.value))}
-                      style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-                    >
-                      {Array.from({ length: fanout(activeSecondary.type) }, (_, i) => i + 1).map((leg) => (
-                        <option key={leg} value={leg}>OUT {leg}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>Porta/cabo de atendimento</div>
-                    <select
-                      value={targetPortId}
-                      onChange={(e) => setTargetPortId(e.target.value)}
-                      style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }}
-                    >
-                      {pluggedPorts.map((p) => (
-                        <option key={p.id} value={p.id}>{p.label} ({p.id})</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-                    Portas de atendimento ({fanout(activeSecondary.type)})
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
-                    {Array.from({ length: fanout(activeSecondary.type) }, (_, i) => i + 1).map((leg) => {
-                      const linked = activeSecondary.outputs.find((o) => o.leg === leg)?.target ?? null
-                      const selected = activeOutLeg === leg
-                      return (
-                        <button
-                          key={`client-port-${leg}`}
-                          onClick={() => setActiveOutLeg(leg)}
-                          style={{
-                            border: selected ? "2px solid #111" : "1px solid #ddd",
-                            background: selected ? "#111" : "#fff",
-                            color: selected ? "#fff" : "#111",
-                            borderRadius: 10,
-                            padding: "8px 6px",
-                            cursor: "pointer",
-                            fontWeight: 900
-                          }}
-                          title={linked ? "Porta ligada" : "Porta livre"}
-                        >
-                          C{leg} {linked ? "• ON" : "• OFF"}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {!targetCable ? (
-                  <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>Selecione uma porta com cabo para conectar clientes.</div>
-                ) : (
-                  <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    {targetCable.fibras.map((f) => {
-                      const ref: SplitterRef = { portId: targetPortId, fibraId: f.id }
-                      const current = activeSecondary.outputs.find((o) => o.leg === activeOutLeg)?.target ?? null
-                      const active = current?.portId === ref.portId && current?.fibraId === ref.fibraId
-                      const busy = used.has(refKey(ref)) && !active
-                      const sameFiberAsInput = primaryInputEquals(ref)
-                      const disabled = busy || sameFiberAsInput
-
-                      return (
-                        <div
-                          key={`${targetPortId}-${f.id}`}
-                          style={chipStyle(f.cor, active, disabled)}
-                          onClick={() => {
-                            if (disabled) return
-                            onSetSplitterOutputRef(ceo.id, activeSecondary.id, activeOutLeg, ref)
-                          }}
-                          title={sameFiberAsInput ? "Mesmo cabo e mesma fibra de entrada nao e permitido." : ""}
-                        >
-                          <span style={dotStyle(f.cor)} />
-                          <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
-                          <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
-                            {active ? `OUT ${activeOutLeg}` : sameFiberAsInput ? "entrada" : busy ? "ocupada" : "-"}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-
-                <button
-                  onClick={() => onSetSplitterOutputRef(ceo.id, activeSecondary.id, activeOutLeg, null)}
-                  style={{ marginTop: 10, border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-                >
-                  Limpar OUT {activeOutLeg}
-                </button>
-              </div>
-            )}
-
-            <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-              Regra: fibras usadas em fusoes/splitters ficam bloqueadas ate desfazer a conexao. E permitido retornar no mesmo cabo, desde que seja outra fibra.
-            </div>
-          </div>
-
-          <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-            <div style={{ fontWeight: 900, marginBottom: 6 }}>Bandeja visual da CTO</div>
-            <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>
-              Fluxo visual: cabo da esquerda {"->"} splitter (bandeja) {"->"} cabo/conector de atendimento.
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              {allTraySplitters.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    setActiveTraySplitterId(s.id)
-                    setTrayOutLeg(1)
-                  }}
-                  style={{
-                    border: "1px solid #ddd",
-                    background: s.id === activeTraySplitterId ? "#111" : "#fff",
-                    color: s.id === activeTraySplitterId ? "#fff" : "#111",
-                    borderRadius: 999,
-                    padding: "6px 10px",
-                    cursor: "pointer",
-                    fontWeight: 900
-                  }}
-                >
-                  {s.role === "PRIMARY" ? "Primario" : `Atendimento P${s.parentLeg ?? "-"}`} | {s.type}
-                </button>
-              ))}
-            </div>
-
-            {!activeTraySplitter ? (
-              <div style={{ fontSize: 12, color: "#666" }}>Nenhum splitter disponivel para visualizacao.</div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 280px 1fr", gap: 12, alignItems: "start" }}>
-                <div>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Esquerda | {leftCable ? leftCable.nome : "sem cabo"}
-                  </div>
-                  {!leftCable ? (
-                    <div style={{ fontSize: 12, color: "#666" }}>Selecione uma porta com cabo na origem do sinal.</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {leftCable.fibras.map((f) => {
-                        const ref: SplitterRef = { portId: leftPortId, fibraId: f.id }
-                        const active = activeTraySplitter.input?.portId === ref.portId && activeTraySplitter.input?.fibraId === ref.fibraId
-                        const busy = used.has(refKey(ref)) && !active
-                        return (
-                          <div
-                            key={`tray-in-${leftPortId}-${f.id}`}
-                            style={chipStyle(f.cor, active, busy)}
-                            onClick={() => {
-                              if (busy) return
-                              onSetSplitterInputRef(ceo.id, activeTraySplitter.id, ref)
-                            }}
-                            title={
-                              activeTraySplitter.role === "SECONDARY"
-                                ? "Definir entrada do splitter de atendimento (por fusao da rede)"
-                                : "Definir entrada do primario"
-                            }
-                          >
-                            <span style={dotStyle(f.cor)} />
-                            <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
-                            <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>{active ? "IN" : busy ? "ocupada" : "-"}</div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ border: "2px solid #111", borderRadius: 12, padding: 10, background: "#fff" }}>
-                  <div style={{ fontWeight: 900, textAlign: "center" }}>
-                    {activeTraySplitter.role === "PRIMARY" ? "SPLITTER PRIMARIO" : `SPLITTER ATENDIMENTO P${activeTraySplitter.parentLeg ?? "-"}`}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#555", textAlign: "center" }}>{activeTraySplitter.type}</div>
-
-                  <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                      <div
-                          style={{
-                          width: 20,
-                          height: 20,
-                          borderRadius: 999,
-                          border: "2px solid #111",
-                          background: refColor(activeTraySplitter.input ?? (activeTraySplitter.role === "SECONDARY" ? primary?.input ?? null : null))
-                        }}
-                      />
-                      <div style={{ fontSize: 11, fontWeight: 900 }}>IN</div>
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
-                      {trayLegs.map((leg) => {
-                        const target = activeTraySplitter.outputs.find((o) => o.leg === leg)?.target ?? null
-                        const selected = effectiveTrayOutLeg === leg
-                        return (
-                          <button
-                            key={`tray-leg-${leg}`}
-                            onClick={() => setTrayOutLeg(leg)}
-                            style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: 10,
-                              border: selected ? "2px solid #111" : "1px solid #ddd",
-                              background: target ? refColor(target) : "#fff",
-                              cursor: "pointer"
-                            }}
-                            title={target ? `OUT ${leg} ligada` : `OUT ${leg} livre`}
-                          />
-                        )
-                      })}
-                      <div style={{ fontSize: 11, fontWeight: 900 }}>OUT</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                    Direita | {targetCable ? targetCable.nome : "sem cabo"} | OUT {effectiveTrayOutLeg}
-                  </div>
-                  {!targetCable ? (
-                    <div style={{ fontSize: 12, color: "#666" }}>Selecione uma porta/cabo de atendimento.</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {targetCable.fibras.map((f) => {
-                        const ref: SplitterRef = { portId: targetPortId, fibraId: f.id }
-                        const current = activeTraySplitter.outputs.find((o) => o.leg === effectiveTrayOutLeg)?.target ?? null
-                        const active = current?.portId === ref.portId && current?.fibraId === ref.fibraId
-                        const busy = used.has(refKey(ref)) && !active
-                        const sameFiberAsInput = primaryInputEquals(ref)
-                        const blockedBySignal = !activeTraySplitter.input
-                        const disabled = busy || sameFiberAsInput || blockedBySignal
-
-                        return (
-                          <div
-                            key={`tray-out-${targetPortId}-${f.id}`}
-                            style={chipStyle(f.cor, active, disabled)}
-                            onClick={() => {
-                              if (disabled) return
-                              onSetSplitterOutputRef(ceo.id, activeTraySplitter.id, effectiveTrayOutLeg, ref)
-                            }}
-                          >
-                            <span style={dotStyle(f.cor)} />
-                            <div style={{ fontWeight: 900, fontSize: 13 }}>{f.nome}</div>
-                            <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
-                              {active ? `OUT ${effectiveTrayOutLeg}` : blockedBySignal ? "sem IN" : busy ? "ocupada" : "-"}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  <button
-                    onClick={() => onSetSplitterOutputRef(ceo.id, activeTraySplitter.id, effectiveTrayOutLeg, null)}
-                    style={{ marginTop: 10, border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}
-                  >
-                    Limpar OUT {effectiveTrayOutLeg}
-                  </button>
-                </div>
+                ))}
               </div>
             )}
           </div>
-        </>
+
+          <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Clientes cadastrados</div>
+            {!activeSecondary ? <div style={{ fontSize: 12, color: "#666" }}>Selecione um splitter.</div> : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>
+                <input value={dropClientName} onChange={(e) => setDropClientName(e.target.value)} placeholder="Nome do cliente" style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd" }} />
+                <button onClick={() => onAddDrop(ceo.id, activeSecondary.id, activeLeg, activeSecondary.outputs.find((o) => o.leg === activeLeg)?.target ?? null, dropClientName)} style={{ border: "1px solid #ddd", background: "#111", color: "#fff", borderRadius: 10, cursor: "pointer" }}>
+                  + Cliente
+                </button>
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {ceo.ctoModel?.drops?.length ? ceo.ctoModel.drops.map((d) => (
+                <div key={d.id} style={{ border: "1px solid #eee", borderRadius: 10, padding: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 140px auto", gap: 8, alignItems: "center" }}>
+                    <input value={d.clientName} onChange={(e) => onUpdateDrop(ceo.id, d.id, { clientName: e.target.value })} style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ddd" }} />
+                    <select value={d.status} onChange={(e) => onUpdateDrop(ceo.id, d.id, { status: e.target.value as CTODropStatus })} style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ddd" }}>
+                      <option value="PLANEJADO">Planejado</option>
+                      <option value="INSTALADO">Instalado</option>
+                      <option value="ATIVO">Ativo</option>
+                      <option value="MANUTENCAO">Manutencao</option>
+                    </select>
+                    <button onClick={() => onRemoveDrop(ceo.id, d.id)} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 8, cursor: "pointer" }}>Remover</button>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>{d.splitterId} | OUT {d.leg} | alvo: {d.target ? `${d.target.portId} F${d.target.fibraId}` : "nao definido"}</div>
+                </div>
+              )) : <div style={{ fontSize: 12, color: "#666" }}>Nenhum cliente cadastrado.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialogOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "grid", placeItems: "center", zIndex: 2000 }}>
+          <div style={{ width: 560, background: "#fff", borderRadius: 12, border: "1px solid #ddd", padding: 12 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Cadastro do splitter</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <input value={newDocName} onChange={(e) => setNewDocName(e.target.value)} placeholder="Nome/Tag do splitter" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd" }} />
+              <input value={newDocCode} onChange={(e) => setNewDocCode(e.target.value)} placeholder="Codigo/Serie" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd" }} />
+              <input value={newDocModel} onChange={(e) => setNewDocModel(e.target.value)} placeholder="Modelo/Fabricante" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd" }} />
+              <select value={newType} onChange={(e) => setNewType(e.target.value as "1x8" | "1x16")} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd" }}>
+                <option value="1x8">1x8</option>
+                <option value="1x16">1x16</option>
+              </select>
+              <select value={newMode} onChange={(e) => setNewMode(e.target.value as CEOSplitterMode)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd" }}>
+                <option value="BALANCED">Balanceado</option>
+                <option value="UNBALANCED">Desbalanceado</option>
+              </select>
+              <select value={newParentLeg == null ? "" : String(newParentLeg)} onChange={(e) => setNewParentLeg(e.target.value ? Number(e.target.value) : null)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd" }}>
+                <option value="">Entrada por fusao</option>
+                {Array.from({ length: 8 }, (_, i) => i + 1)
+                  .filter((leg) => !secondaries.some((s) => s.parentLeg === leg))
+                  .map((leg) => <option key={leg} value={leg}>Perna primario {leg}</option>)}
+              </select>
+            </div>
+            <textarea value={newDocNotes} onChange={(e) => setNewDocNotes(e.target.value)} placeholder="Observacoes tecnicas / documentacao" style={{ marginTop: 8, width: "100%", minHeight: 70, border: "1px solid #ddd", borderRadius: 8, padding: 8 }} />
+            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={newConnectorized} onChange={(e) => setNewConnectorized(e.target.checked)} />
+                Conectorizado
+              </label>
+              <select value={newConnectorType} onChange={(e) => setNewConnectorType(e.target.value as CTOConnectorType)} disabled={!newConnectorized} style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ddd" }}>
+                <option value="APC">APC</option>
+                <option value="UPC">UPC</option>
+              </select>
+            </div>
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "end", gap: 8 }}>
+              <button onClick={() => setDialogOpen(false)} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}>Cancelar</button>
+              <button onClick={confirmAddSplitter} style={{ border: "1px solid #ddd", background: "#111", color: "#fff", borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}>Adicionar splitter</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
 }
+

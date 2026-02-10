@@ -12,7 +12,11 @@ import {
   SplitterRef,
   CEOSplitterRole,
   BoxKind,
-  BoxFormData
+  BoxFormData,
+  CTOCableTubeSize,
+  CTODropStatus,
+  CTOTerminationType,
+  CTOConnectorType
 } from "@/types/ftth"
 import { findClosestPointOnPath, splitPathAt } from "./geoSplit"
 import { gerarFibras } from "@/components/map/gerarfibras"
@@ -121,7 +125,16 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       tipo: c.tipo ?? "CEO",
       ports: Array.isArray(c.ports) ? c.ports : [],
       fusoes: Array.isArray(c.fusoes) ? c.fusoes : [],
-      splitters: Array.isArray(c.splitters) ? c.splitters : []
+      splitters: Array.isArray(c.splitters) ? c.splitters : [],
+      ctoModel: c.tipo === "CTO"
+        ? {
+            cableTubes: Array.isArray(c.ctoModel?.cableTubes) ? c.ctoModel!.cableTubes : [],
+            drops: Array.isArray(c.ctoModel?.drops) ? c.ctoModel!.drops : [],
+            legConfigs: Array.isArray(c.ctoModel?.legConfigs) ? c.ctoModel!.legConfigs : [],
+            splitterConfigs: Array.isArray(c.ctoModel?.splitterConfigs) ? c.ctoModel!.splitterConfigs : [],
+            explicitlyUnfed: Boolean(c.ctoModel?.explicitlyUnfed)
+          }
+        : c.ctoModel
     }
   }
 
@@ -332,7 +345,8 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
         { id: "OUT-1", label: "Saida 1", direction: "OUT", caboId: caboBId }
       ],
       fusoes: [],
-      splitters
+      splitters,
+      ctoModel: form.tipo === "CTO" ? { cableTubes: [], drops: [], legConfigs: [], splitterConfigs: [], explicitlyUnfed: false } : undefined
     }
 
     const cutProg = progressAlongPath(sourceFiber.path, draft.point)
@@ -398,7 +412,17 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
             }))
           : c.splitters
 
-        return { ...c, ports: nextPorts, fusoes: nextFusoes, splitters: nextSplitters }
+        const nextCtoModel = c.ctoModel
+          ? {
+              ...c.ctoModel,
+              drops: c.ctoModel.drops.map((d) => ({
+                ...d,
+                target: d.target?.portId === portId ? null : d.target
+              }))
+            }
+          : c.ctoModel
+
+        return { ...c, ports: nextPorts, fusoes: nextFusoes, splitters: nextSplitters, ctoModel: nextCtoModel }
       })
     )
   }
@@ -438,7 +462,20 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     )
   }
 
-  function addCTOSecondarySplitter(ceoId: number, type: "1x8" | "1x16", parentLeg: number | null) {
+  function addCTOSecondarySplitter(
+    ceoId: number,
+    type: "1x8" | "1x16",
+    parentLeg: number | null,
+    mode: CEOSplitterMode = "BALANCED",
+    connectorized = true,
+    connectorType: CTOConnectorType = "APC",
+    docs?: Partial<{
+      docName: string
+      docCode: string
+      docModel: string
+      docNotes: string
+    }>
+  ) {
     setCeos((prev) =>
       prev.map((c0) => {
         const c = normalizeCEO(c0)
@@ -449,8 +486,19 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
         const existsOnLeg = parentLeg != null && c.splitters.some((s) => s.role === "SECONDARY" && s.parentLeg === parentLeg)
         if (existsOnLeg) return c
 
-        const secondary = makeSplitter(type, "BALANCED", "SECONDARY", parentLeg)
-        return { ...c, splitters: [...c.splitters, secondary] }
+        const secondary = makeSplitter(type, mode, "SECONDARY", parentLeg)
+        const model = ensureCtoModel(c)
+        return {
+          ...c,
+          splitters: [...c.splitters, secondary],
+          ctoModel: {
+            ...model,
+            splitterConfigs: [
+              ...(model.splitterConfigs ?? []),
+              { splitterId: secondary.id, connectorized, connectorType, ...docs }
+            ]
+          }
+        }
       })
     )
   }
@@ -468,7 +516,18 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
           return c
         }
 
-        return { ...c, splitters: c.splitters.filter((s) => s.id !== splitterId) }
+        return {
+          ...c,
+          splitters: c.splitters.filter((s) => s.id !== splitterId),
+          ctoModel: c.ctoModel
+            ? {
+                ...c.ctoModel,
+                drops: c.ctoModel.drops.filter((d) => d.splitterId !== splitterId),
+                legConfigs: (c.ctoModel.legConfigs ?? []).filter((x) => x.splitterId !== splitterId),
+                splitterConfigs: (c.ctoModel.splitterConfigs ?? []).filter((x) => x.splitterId !== splitterId)
+              }
+            : c.ctoModel
+        }
       })
     )
   }
@@ -539,6 +598,177 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
             return { ...s, unbalanced: { ...(s.unbalanced ?? {}), [leg]: percent } }
           })
         }
+      })
+    )
+  }
+
+  function ensureCtoModel(c: CEO) {
+    if (c.ctoModel) return c.ctoModel
+    return { cableTubes: [], drops: [], legConfigs: [], splitterConfigs: [], explicitlyUnfed: false }
+  }
+
+  function setCTOLegTermination(ceoId: number, splitterId: string, leg: number, termination: CTOTerminationType) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        const model = ensureCtoModel(c)
+        const legConfigs = model.legConfigs ?? []
+
+        const exists = legConfigs.some((x) => x.splitterId === splitterId && x.leg === leg)
+        const nextLegConfigs = exists
+          ? legConfigs.map((x) => (x.splitterId === splitterId && x.leg === leg ? { ...x, termination } : x))
+          : [...legConfigs, { splitterId, leg, termination }]
+
+        return {
+          ...c,
+          ctoModel: {
+            ...model,
+            legConfigs: nextLegConfigs
+          }
+        }
+      })
+    )
+  }
+
+  function setCTOExplicitlyUnfed(ceoId: number, explicitlyUnfed: boolean) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        const model = ensureCtoModel(c)
+        return {
+          ...c,
+          ctoModel: {
+            ...model,
+            explicitlyUnfed
+          }
+        }
+      })
+    )
+  }
+
+  function setCTOSplitterConfig(ceoId: number, splitterId: string, patch: Partial<{
+    connectorized: boolean
+    connectorType: CTOConnectorType
+    docName: string
+    docCode: string
+    docModel: string
+    docNotes: string
+  }>) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        const model = ensureCtoModel(c)
+        const list = model.splitterConfigs ?? []
+        const exists = list.some((x) => x.splitterId === splitterId)
+        const next = exists
+          ? list.map((x) => (x.splitterId === splitterId ? { ...x, ...patch } : x))
+          : [...list, { splitterId, connectorized: patch.connectorized ?? true, connectorType: patch.connectorType ?? "APC" }]
+        return {
+          ...c,
+          ctoModel: {
+            ...model,
+            splitterConfigs: next
+          }
+        }
+      })
+    )
+  }
+
+  function setCTOCableTubeSize(ceoId: number, cableId: number, tubeSize: CTOCableTubeSize) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+
+        const model = ensureCtoModel(c)
+        const exists = model.cableTubes.some((t) => t.cableId === cableId)
+        const cableTubes = exists
+          ? model.cableTubes.map((t) => (t.cableId === cableId ? { ...t, tubeSize } : t))
+          : [...model.cableTubes, { cableId, tubeSize }]
+
+        return { ...c, ctoModel: { ...model, cableTubes } }
+      })
+    )
+  }
+
+  function addCTODrop(
+    ceoId: number,
+    splitterId: string,
+    leg: number,
+    target: SplitterRef | null,
+    clientName: string
+  ) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        const model = ensureCtoModel(c)
+
+        const already = model.drops.some((d) => d.splitterId === splitterId && d.leg === leg)
+        if (already) return c
+
+        return {
+          ...c,
+          ctoModel: {
+            ...model,
+            drops: [
+              ...model.drops,
+              {
+                id: `DROP-${nextId()}`,
+                splitterId,
+                leg,
+                target,
+                clientName: clientName.trim() || `Cliente OUT ${leg}`,
+                status: "PLANEJADO" as CTODropStatus
+              }
+            ]
+          }
+        }
+      })
+    )
+  }
+
+  function updateCTODrop(ceoId: number, dropId: string, patch: Partial<{
+    clientName: string
+    clientCode: string
+    notes: string
+    status: CTODropStatus
+    target: SplitterRef | null
+  }>) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        const model = ensureCtoModel(c)
+
+        return {
+          ...c,
+          ctoModel: {
+            ...model,
+            drops: model.drops.map((d) => (d.id === dropId ? { ...d, ...patch } : d))
+          }
+        }
+      })
+    )
+  }
+
+  function removeCTODrop(ceoId: number, dropId: string) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId) return c
+        if (c.tipo !== "CTO") return c
+        const model = ensureCtoModel(c)
+        return { ...c, ctoModel: { ...model, drops: model.drops.filter((d) => d.id !== dropId) } }
       })
     )
   }
@@ -636,6 +866,13 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     setSplitterInputRef,
     setSplitterOutputRef,
     setSplitterLegUnbalanced,
+    setCTOCableTubeSize,
+    setCTOLegTermination,
+    setCTOSplitterConfig,
+    setCTOExplicitlyUnfed,
+    addCTODrop,
+    updateCTODrop,
+    removeCTODrop,
 
     mode,
     setMode
