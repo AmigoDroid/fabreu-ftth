@@ -373,6 +373,9 @@ export function CTOEditor({
                 {sortedSecondaries.map((s) => {
                   const cfg = getSplitterCfg(ceo, s.id)
                   const legs = legsFromType(s.type)
+                  const legOnCard = activeSecondary?.id === s.id ? activeLeg : 1
+                  const termOnCard = getLegTermination(ceo.ctoModel, s.id, legOnCard)
+                  const targetOnCard = s.outputs.find((o) => o.leg === legOnCard)?.target
                   return (
                     <div key={s.id} style={{ width: 300, border: "1px solid #ddd", borderRadius: 12, padding: 8, background: activeSecondary?.id === s.id ? "#fafafa" : "#fff" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -445,38 +448,41 @@ export function CTOEditor({
                         <button onClick={() => onSetSplitterInputRef(ceo.id, s.id, null)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px" }}>Limpar IN</button>
                         <button onClick={() => onSetSplitterConfig(ceo.id, s.id, { connectorized: !cfg.connectorized })} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px" }}>{cfg.connectorized ? "Cortar base" : "Conectorizar"}</button>
                       </div>
-                      <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 6 }}>
-                        {legs.map((leg) => {
-                          const term = getLegTermination(ceo.ctoModel, s.id, leg)
-                          const tgt = s.outputs.find((o) => o.leg === leg)?.target
-                          const active = Boolean(
-                            pending &&
-                            !("input" in pending) &&
-                            "splitterId" in pending &&
-                            pending.splitterId === s.id &&
-                            pending.leg === leg
-                          )
-                          return (
-                            <div key={leg} style={{ border: active ? "2px solid #111" : "1px solid #ddd", borderRadius: 8, padding: 4 }}>
-                              <div style={{ fontSize: 10, fontWeight: 900 }}>OUT {leg}</div>
-                              <button onClick={() => {
-                                setActiveSecondaryId(s.id)
-                                setActiveLeg(leg)
-                                if (term === "FIBRA_NUA") setPending({ splitterId: s.id, leg })
-                              }} style={{ marginTop: 2, width: "100%", border: "1px solid #ddd", borderRadius: 6, background: term === "CONECTOR" ? "#fafafa" : "#fff", cursor: term === "CONECTOR" ? "default" : "pointer", fontSize: 10 }}>
-                                {term === "CONECTOR" ? `CON ${cfg.connectorType}` : "FUSIONAR"}
-                              </button>
-                              <button onClick={() => {
-                                const next = term === "CONECTOR" ? "FIBRA_NUA" : "CONECTOR"
-                                onSetLegTermination(ceo.id, s.id, leg, next)
-                                if (next === "CONECTOR") onSetSplitterOutputRef(ceo.id, s.id, leg, null)
-                              }} style={{ marginTop: 2, width: "100%", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 10 }}>
-                                {term === "CONECTOR" ? "Cortar" : "Repor conector"}
-                              </button>
-                              <div style={{ marginTop: 2, fontSize: 9, color: "#666" }}>{tgt ? `${tgt.portId} F${tgt.fibraId}` : "-"}</div>
-                            </div>
-                          )
-                        })}
+                      <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 6 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                          <select
+                            value={legOnCard}
+                            onChange={(e) => {
+                              setActiveSecondaryId(s.id)
+                              setActiveLeg(Number(e.target.value))
+                            }}
+                            style={{ border: "1px solid #ddd", borderRadius: 8, padding: "4px 6px" }}
+                          >
+                            {legs.map((leg) => <option key={leg} value={leg}>OUT {leg}</option>)}
+                          </select>
+                          <button
+                            onClick={() => {
+                              setActiveSecondaryId(s.id)
+                              if (termOnCard === "FIBRA_NUA") setPending({ splitterId: s.id, leg: legOnCard })
+                            }}
+                            style={{ border: "1px solid #ddd", borderRadius: 8, background: termOnCard === "FIBRA_NUA" ? "#fff" : "#fafafa", cursor: termOnCard === "FIBRA_NUA" ? "pointer" : "not-allowed", padding: "4px 8px", fontSize: 11 }}
+                          >
+                            {termOnCard === "FIBRA_NUA" ? "Fusionar OUT ativo" : `CON ${cfg.connectorType}`}
+                          </button>
+                        </div>
+                        <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                          <button
+                            onClick={() => {
+                              const next = termOnCard === "CONECTOR" ? "FIBRA_NUA" : "CONECTOR"
+                              onSetLegTermination(ceo.id, s.id, legOnCard, next)
+                              if (next === "CONECTOR") onSetSplitterOutputRef(ceo.id, s.id, legOnCard, null)
+                            }}
+                            style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px", fontSize: 11 }}
+                          >
+                            {termOnCard === "CONECTOR" ? "Cortar conector da OUT ativa" : "Repor conector na OUT ativa"}
+                          </button>
+                          <div style={{ fontSize: 10, color: "#666" }}>{targetOnCard ? `${targetOnCard.portId} F${targetOnCard.fibraId}` : "-"}</div>
+                        </div>
                       </div>
                       {s.mode === "UNBALANCED" && (
                         <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 6, display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 4 }}>
