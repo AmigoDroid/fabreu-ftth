@@ -103,6 +103,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
   const [newProjectName, setNewProjectName] = useState("")
   const [newCityName, setNewCityName] = useState("")
   const [newPopName, setNewPopName] = useState("")
+  const [sidebarOpen, setSidebarOpen] = useState(true)
 
   const activeProject = useMemo(() => projects.find((p) => p.id === activeProjectId) ?? projects[0], [projects, activeProjectId])
   const cityOptions = useMemo(() => activeProject?.cities ?? [{ name: "Cidade Base", pops: ["POP Central"] }], [activeProject])
@@ -219,13 +220,61 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
     setNewPopName("")
   }
 
+  function addPopQuick() {
+    const base = "POP"
+    const existing = new Set(popOptions)
+    let i = popOptions.length + 1
+    let candidate = `${base} ${i}`
+    while (existing.has(candidate)) {
+      i += 1
+      candidate = `${base} ${i}`
+    }
+    setNewPopName(candidate)
+    setProjects((prev) => prev.map((p) => {
+      if (p.id !== activeProjectId) return p
+      return {
+        ...p,
+        cities: p.cities.map((c) => {
+          if (c.name !== resolvedWorkingCity) return c
+          if (c.pops.includes(candidate)) return c
+          return { ...c, pops: [...c.pops, candidate] }
+        })
+      }
+    }))
+    setWorkingPop(candidate)
+    setPopFilter(candidate)
+  }
+
   return (
     <>
       <PopupSalvar open={fiber.openSave} onSalvar={fiber.salvarNovaFibra} onCancelar={() => fiber.setOpenSave(false)} />
 
       <PopupSalvarCaixa key={`${fiber.openBoxSave}-${selectedKind}`} open={fiber.openBoxSave} kind={selectedKind} onSalvar={fiber.salvarNovaCaixa} onCancelar={fiber.cancelPlaceBox} />
 
-      <aside style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: 330, zIndex: 1500, background: "linear-gradient(170deg,#f5f9ff 0%,#ffffff 52%,#eef5ff 100%)", borderRight: "1px solid #d8e3f2", boxShadow: "0 12px 32px rgba(15,23,42,.15)", padding: 14, overflowY: "auto" }}>
+      <button
+        onClick={() => setSidebarOpen((v) => !v)}
+        title={sidebarOpen ? "Esconder sidebar" : "Abrir sidebar"}
+        style={{
+          position: "absolute",
+          top: 10,
+          left: sidebarOpen ? 330 : 0,
+          zIndex: 1600,
+          width: 34,
+          height: 42,
+          borderRadius: "0 10px 10px 0",
+          border: "1px solid #cbd5e1",
+          borderLeft: "none",
+          background: "#102a56",
+          color: "#fff",
+          fontWeight: 900,
+          cursor: "pointer",
+          boxShadow: "0 8px 20px rgba(16,42,86,.25)"
+        }}
+      >
+        {sidebarOpen ? "<" : ">"}
+      </button>
+
+      <aside style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: 330, zIndex: 1500, background: "linear-gradient(170deg,#f5f9ff 0%,#ffffff 52%,#eef5ff 100%)", borderRight: "1px solid #d8e3f2", boxShadow: "0 12px 32px rgba(15,23,42,.15)", padding: 14, overflowY: "auto", transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .2s ease" }}>
         <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>Projetos FTTH</div>
 
         <label style={{ display: "grid", gap: 4, marginBottom: 8, fontSize: 12 }}>
@@ -306,7 +355,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
         </div>
       </aside>
 
-      {drawMode && <MapToolbar setDrawingMode={fiber.setDrawingMode} setMode={fiber.setMode} mode={fiber.mode} leftOffset={330} />}
+      {drawMode && <MapToolbar setDrawingMode={fiber.setDrawingMode} setMode={fiber.setMode} mode={fiber.mode} onAddPop={addPopQuick} leftOffset={sidebarOpen ? 330 : 0} />}
 
       {caixaSelecionada && caixaSelecionada.tipo === "CEO" && (
         <CEOEditor
@@ -395,7 +444,7 @@ export default function Map({ clients, fibers, drawMode = false }: Props) {
       <GoogleMap
         center={center}
         zoom={16}
-        mapContainerStyle={{ height: "100vh", marginLeft: 330 }}
+        mapContainerStyle={{ height: "100vh", marginLeft: sidebarOpen ? 330 : 0 }}
         onClick={(e) => {
           if (
             fiber.mode !== "place-ceo" &&

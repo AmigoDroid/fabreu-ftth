@@ -1,7 +1,7 @@
 // app/page.tsx
 import Map from "@/components/map/Map"
-import { clients, fibers } from "@/lib/fakeData"
+import { NETWORK_SEED_JSON } from "@/lib/fakeData"
 
 export default function Home() {
-  return <Map clients={clients} fibers={fibers} drawMode={true} />
+  return <Map clients={NETWORK_SEED_JSON.clients} fibers={NETWORK_SEED_JSON.fibers} drawMode={true} />
 }

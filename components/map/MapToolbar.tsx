@@ -7,10 +7,11 @@ type Props = {
   setDrawingMode: (mode: google.maps.drawing.OverlayType | null) => void
   setMode: (m: "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null) => void
   mode: "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
+  onAddPop: () => void
   leftOffset?: number
 }
 
-export function MapToolbar({ setDrawingMode, setMode, mode, leftOffset = 336 }: Props) {
+export function MapToolbar({ setDrawingMode, setMode, mode, onAddPop, leftOffset = 336 }: Props) {
   const [open, setOpen] = useState(false)
 
   const btn: React.CSSProperties = {
@@ -85,11 +86,12 @@ export function MapToolbar({ setDrawingMode, setMode, mode, leftOffset = 336 }: 
             Desenhar / Salvar cabo
           </button>
 
-          <button style={modeBtnStyle(mode === "place-olt", "#22543d")} onClick={() => { setMode(mode === "place-olt" ? null : "place-olt"); setDrawingMode(null) }}>
-            Inserir OLT
-          </button>
-          <button style={modeBtnStyle(mode === "place-dio", "#7c2d12")} onClick={() => { setMode(mode === "place-dio" ? null : "place-dio"); setDrawingMode(null) }}>
-            Inserir DIO
+          <button
+            style={{ ...btn, padding: "8px 10px", borderRadius: 8, background: "#102a56", border: "1px solid #102a56", color: "#fff", fontWeight: 800, textAlign: "left" }}
+            onClick={onAddPop}
+            title="Adicionar POP na cidade ativa"
+          >
+            + Adicionar POP
           </button>
           <button style={modeBtnStyle(mode === "place-ceo", "#2f6fed")} onClick={() => { setMode(mode === "place-ceo" ? null : "place-ceo"); setDrawingMode(null) }}>
             Inserir CEO
@@ -112,9 +114,9 @@ export function MapToolbar({ setDrawingMode, setMode, mode, leftOffset = 336 }: 
             Cancelar modo
           </button>
 
-          {(mode === "place-ceo" || mode === "place-cto" || mode === "place-olt" || mode === "place-dio" || mode === "place-cliente") && (
+          {(mode === "place-ceo" || mode === "place-cto" || mode === "place-cliente") && (
             <div style={{ fontSize: 11, color: "#475569", borderTop: "1px solid #e2e8f0", paddingTop: 6 }}>
-              Clique no cabo para posicionar {mode === "place-ceo" ? "CEO" : mode === "place-cto" ? "CTO" : mode === "place-olt" ? "OLT" : mode === "place-dio" ? "DIO" : "Cliente"}.
+              Clique no cabo para posicionar {mode === "place-ceo" ? "CEO" : mode === "place-cto" ? "CTO" : "Cliente"}.
             </div>
           )}
         </div>
