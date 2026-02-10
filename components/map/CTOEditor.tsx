@@ -372,6 +372,7 @@ export function CTOEditor({
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {sortedSecondaries.map((s) => {
                   const cfg = getSplitterCfg(ceo, s.id)
+                  const legs = legsFromType(s.type)
                   return (
                     <div key={s.id} style={{ width: 300, border: "1px solid #ddd", borderRadius: 12, padding: 8, background: activeSecondary?.id === s.id ? "#fafafa" : "#fff" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -384,25 +385,68 @@ export function CTOEditor({
                         Doc: {cfg.docName || "-"} | Cod: {cfg.docCode || "-"} | Mod: {cfg.docModel || "-"}
                       </div>
                       <div style={{ marginTop: 6, border: "1px solid #eee", borderRadius: 8, padding: 6 }}>
-                        <svg width="100%" height="74" viewBox="0 0 280 74">
-                          <rect x="95" y="8" width="90" height="58" rx="10" fill="#fff" stroke="#111" strokeWidth="2" />
-                          <text x="140" y="32" textAnchor="middle" fontSize="12" fontWeight="700">{s.type}</text>
-                          <text x="140" y="47" textAnchor="middle" fontSize="9" fill="#666">{s.mode}</text>
-                          <circle cx="80" cy="37" r="5" fill="#fff" stroke="#111" strokeWidth="2" />
-                          <line x1="85" y1="37" x2="95" y2="37" stroke="#111" strokeWidth="2" />
-                          {legsFromType(s.type).slice(0, 8).map((leg, idx) => {
-                            const y = 13 + idx * 7.2
-                            return <line key={leg} x1="185" y1={y} x2="198" y2={y} stroke="#111" strokeWidth="1.5" />
+                        <svg width="100%" height="150" viewBox="0 0 280 150">
+                          <rect x="98" y="20" width="84" height="110" rx="10" fill="#fff" stroke="#111" strokeWidth="2" />
+                          <text x="140" y="44" textAnchor="middle" fontSize="12" fontWeight="700">{s.type}</text>
+                          <text x="140" y="58" textAnchor="middle" fontSize="9" fill="#666">{s.mode}</text>
+                          <text x="140" y="71" textAnchor="middle" fontSize="8" fill="#888">{cfg.connectorized ? `CON ${cfg.connectorType}` : "FIBRA NUA"}</text>
+
+                          <line x1="82" y1="75" x2="98" y2="75" stroke="#111" strokeWidth="2" />
+                          <circle
+                            cx="82"
+                            cy="75"
+                            r="6"
+                            data-spl-in={s.id}
+                            onClick={() => setPending({ splitterId: s.id, input: true })}
+                            fill={pending && "input" in pending && pending.splitterId === s.id ? "#111" : "#fff"}
+                            stroke="#111"
+                            strokeWidth="2"
+                            style={{ cursor: "pointer" }}
+                          />
+
+                          {legs.slice(0, 16).map((leg, idx) => {
+                            const y = 27 + idx * (100 / Math.max(legs.length - 1, 1))
+                            const term = getLegTermination(ceo.ctoModel, s.id, leg)
+                            const tgt = s.outputs.find((o) => o.leg === leg)?.target
+                            const active = Boolean(
+                              pending &&
+                              !("input" in pending) &&
+                              "splitterId" in pending &&
+                              pending.splitterId === s.id &&
+                              pending.leg === leg
+                            )
+                            const color = term === "CONECTOR" ? "#999" : active ? "#111" : "#fff"
+                            return (
+                              <g key={leg}>
+                                <line x1="182" y1={y} x2="197" y2={y} stroke="#111" strokeWidth="1.5" />
+                                <circle
+                                  cx="203"
+                                  cy={y}
+                                  r="5.3"
+                                  data-spl-leg={`${s.id}:${leg}`}
+                                  onClick={() => {
+                                    setActiveSecondaryId(s.id)
+                                    setActiveLeg(leg)
+                                    if (term === "FIBRA_NUA") setPending({ splitterId: s.id, leg })
+                                  }}
+                                  fill={color}
+                                  stroke="#111"
+                                  strokeWidth="1.5"
+                                  style={{ cursor: term === "FIBRA_NUA" ? "pointer" : "default" }}
+                                />
+                                {legs.length <= 8 && <text x="214" y={y + 3} fontSize="8" fill="#666">L{leg}</text>}
+                                {tgt && <circle cx="194" cy={y} r="2" fill="#13c2c2" />}
+                              </g>
+                            )
                           })}
                         </svg>
                       </div>
                       <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
-                        <button data-spl-in={s.id} onClick={() => setPending({ splitterId: s.id, input: true })} style={{ border: "1px solid #ddd", borderRadius: 8, background: pending && "input" in pending && pending.splitterId === s.id ? "#111" : "#fff", color: pending && "input" in pending && pending.splitterId === s.id ? "#fff" : "#111", cursor: "pointer", padding: "4px 8px" }}>IN</button>
                         <button onClick={() => onSetSplitterInputRef(ceo.id, s.id, null)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px" }}>Limpar IN</button>
                         <button onClick={() => onSetSplitterConfig(ceo.id, s.id, { connectorized: !cfg.connectorized })} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px" }}>{cfg.connectorized ? "Cortar base" : "Conectorizar"}</button>
                       </div>
                       <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 6 }}>
-                        {legsFromType(s.type).map((leg) => {
+                        {legs.map((leg) => {
                           const term = getLegTermination(ceo.ctoModel, s.id, leg)
                           const tgt = s.outputs.find((o) => o.leg === leg)?.target
                           const active = Boolean(
@@ -415,7 +459,7 @@ export function CTOEditor({
                           return (
                             <div key={leg} style={{ border: active ? "2px solid #111" : "1px solid #ddd", borderRadius: 8, padding: 4 }}>
                               <div style={{ fontSize: 10, fontWeight: 900 }}>OUT {leg}</div>
-                              <button data-spl-leg={`${s.id}:${leg}`} onClick={() => {
+                              <button onClick={() => {
                                 setActiveSecondaryId(s.id)
                                 setActiveLeg(leg)
                                 if (term === "FIBRA_NUA") setPending({ splitterId: s.id, leg })
