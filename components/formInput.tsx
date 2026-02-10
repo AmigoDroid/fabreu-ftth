@@ -5,6 +5,8 @@ export type FiberFormData = {
   nome: string;
   tipoCabo: string;
   totalFibras: number;
+  tubeCount: number;
+  fibersPerTube: number;
   fabricante: string;
   modelo: string;
   origem: string;
@@ -22,6 +24,8 @@ const initialForm: FiberFormData = {
   nome: "",
   tipoCabo: "DIO-EXTERNO",
   totalFibras: 12,
+  tubeCount: 1,
+  fibersPerTube: 12,
   fabricante: "",
   modelo: "",
   origem: "",
@@ -54,7 +58,22 @@ export function PopupSalvar({
     }
 
     if (!Number.isFinite(form.totalFibras) || form.totalFibras < 1) {
-      alert("Quantidade de fibras inválida.");
+      alert("Quantidade de fibras invalida.");
+      return;
+    }
+
+    if (!Number.isFinite(form.tubeCount) || form.tubeCount < 1) {
+      alert("O cabo precisa ter no minimo 1 tubo.");
+      return;
+    }
+
+    if (!Number.isFinite(form.fibersPerTube) || form.fibersPerTube < 1) {
+      alert("Informe quantas fibras por tubo.");
+      return;
+    }
+
+    if (form.tubeCount * form.fibersPerTube < form.totalFibras) {
+      alert("A capacidade de tubos nao cobre a quantidade total de fibras.");
       return;
     }
 
@@ -110,6 +129,28 @@ export function PopupSalvar({
         </label>
 
         <label>
+          Quantidade de tubos*
+          <input
+            type="number"
+            min={1}
+            max={96}
+            value={form.tubeCount}
+            onChange={(e) => update("tubeCount", Number(e.target.value || 1))}
+          />
+        </label>
+
+        <label>
+          Fibras por tubo*
+          <input
+            type="number"
+            min={1}
+            max={24}
+            value={form.fibersPerTube}
+            onChange={(e) => update("fibersPerTube", Number(e.target.value || 1))}
+          />
+        </label>
+
+        <label>
           Fabricante
           <input
             placeholder="Ex.: Furukawa"
@@ -146,9 +187,9 @@ export function PopupSalvar({
         </label>
 
         <label>
-          Observações
+          Observacoes
           <textarea
-            placeholder="Informações relevantes para operação e manutenção"
+            placeholder="Informacoes relevantes para operacao e manutencao"
             value={form.descricao}
             onChange={(e) => update("descricao", e.target.value)}
           />

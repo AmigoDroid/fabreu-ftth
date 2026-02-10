@@ -13,9 +13,14 @@ export type FiberCore = {
 
 export type FiberSegment = {
   id: number
+  projectId?: string
+  city?: string
+  pop?: string
   nome: string
   descricao: string
   tipoCabo?: string
+  tubeCount?: number
+  fibersPerTube?: number
   fabricante?: string
   modelo?: string
   origem?: string
@@ -37,7 +42,7 @@ export type CEOFusion = {
   b: { portId: string; fibraId: number }
 }
 
-export type BoxKind = "CEO" | "CTO"
+export type BoxKind = "CEO" | "CTO" | "OLT" | "DIO" | "CLIENTE"
 
 export type BoxFormData = {
   nome: string
@@ -118,8 +123,38 @@ export type CTOModel = {
   explicitlyUnfed?: boolean
 }
 
+export type OLTGbicClass = "B+" | "C+" | "C++" | "XGS-PON-N1" | "XGS-PON-N2"
+export type OLTSignalProfile = "GPON" | "XGS-PON" | "EPON"
+
+export type OLTPon = {
+  id: string
+  label: string
+  portId: string
+  gbicClass: OLTGbicClass
+  signalProfile: OLTSignalProfile
+  txDbm?: number
+  enabled: boolean
+}
+
+export type OLTSlot = {
+  id: string
+  label: string
+  pons: OLTPon[]
+}
+
+export type OLTModel = {
+  slots: OLTSlot[]
+}
+
+export type DIOModel = {
+  cityTag?: string
+}
+
 export type CEO = {
   id: number
+  projectId?: string
+  city?: string
+  pop?: string
   tipo: BoxKind
   nome: string
   codigo?: string
@@ -133,10 +168,15 @@ export type CEO = {
   fusoes: CEOFusion[]
   splitters: CEOSplitter[]
   ctoModel?: CTOModel
+  oltModel?: OLTModel
+  dioModel?: DIOModel
 }
 
 export type Client = {
   id: number
+  projectId?: string
+  city?: string
+  pop?: string
   nome: string
   position: LatLng
   rx: number

@@ -5,6 +5,9 @@ import { gerarFibras } from "@/components/map/gerarfibras"
 export const clients: Client[] = [
   {
     id: 1,
+    projectId: "project-default",
+    city: "Cidade Base",
+    pop: "POP Central",
     nome: "Cliente 1",
     position: { lat: -23.55, lng: -46.63 },
     rx: -18.5
@@ -14,8 +17,13 @@ export const clients: Client[] = [
 export const fibers: FiberSegment[] = [
   {
     id: 1,
+    projectId: "project-default",
+    city: "Cidade Base",
+    pop: "POP Central",
     nome: "teste",
     descricao: "cabo principal",
+    tubeCount: 1,
+    fibersPerTube: 12,
     caboCor: "#ff5500",
     path: [
       { lat: -23.55, lng: -46.63 },

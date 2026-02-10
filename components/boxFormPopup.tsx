@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { BoxFormData, BoxKind } from "@/types/ftth"
 import "./forminput.css"
 
@@ -25,12 +25,13 @@ function initialForm(kind: BoxKind): BoxFormData {
 export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
   const [form, setForm] = useState<BoxFormData>(() => initialForm(kind))
 
-  useEffect(() => {
-    if (!open) return
-    setForm(initialForm(kind))
-  }, [open, kind])
-
-  const title = useMemo(() => (kind === "CTO" ? "Nova caixa CTO" : "Nova caixa CEO"), [kind])
+  const title = useMemo(() => {
+    if (kind === "CTO") return "Nova caixa CTO"
+    if (kind === "OLT") return "Novo chassi OLT"
+    if (kind === "DIO") return "Novo DIO"
+    if (kind === "CLIENTE") return "Novo ponto de cliente"
+    return "Nova caixa CEO"
+  }, [kind])
 
   if (!open) return null
 
@@ -70,6 +71,8 @@ export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
       descricao: form.descricao.trim(),
       tipo: kind
     })
+
+    setForm(initialForm(kind))
   }
 
   return (
@@ -80,7 +83,7 @@ export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
         <label>
           Nome da caixa*
           <input
-            placeholder={kind === "CTO" ? "Ex.: CTO-12 Rua das Flores" : "Ex.: CEO-07 Emenda A"}
+            placeholder={kind === "CTO" ? "Ex.: CTO-12 Rua das Flores" : kind === "OLT" ? "Ex.: OLT POP Centro" : kind === "DIO" ? "Ex.: DIO Trunk Cidade A" : kind === "CLIENTE" ? "Ex.: Cliente Torre Sul 34" : "Ex.: CEO-07 Emenda A"}
             value={form.nome}
             onChange={(e) => update("nome", e.target.value)}
           />
@@ -89,7 +92,7 @@ export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
         <label>
           Codigo/ID*
           <input
-            placeholder={kind === "CTO" ? "Ex.: CTO-ZN-0012" : "Ex.: CEO-BB-0007"}
+            placeholder={kind === "CTO" ? "Ex.: CTO-ZN-0012" : kind === "OLT" ? "Ex.: OLT-POP-01" : kind === "DIO" ? "Ex.: DIO-CITY-10" : kind === "CLIENTE" ? "Ex.: CTE-000231" : "Ex.: CEO-BB-0007"}
             value={form.codigo}
             onChange={(e) => update("codigo", e.target.value)}
           />
@@ -107,7 +110,7 @@ export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
         <label>
           Modelo
           <input
-            placeholder={kind === "CTO" ? "Ex.: CTO 16 portas" : "Ex.: Caixa de emenda 48F"}
+            placeholder={kind === "CTO" ? "Ex.: CTO 16 portas" : kind === "OLT" ? "Ex.: Chassi 16 slots" : kind === "DIO" ? "Ex.: Bastidor 144F" : kind === "CLIENTE" ? "Ex.: ONU Bridge" : "Ex.: Caixa de emenda 48F"}
             value={form.modelo}
             onChange={(e) => update("modelo", e.target.value)}
           />
@@ -116,7 +119,7 @@ export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
         <label>
           Origem do sinal*
           <input
-            placeholder="Ex.: CEO-03 OUT-2"
+            placeholder="Ex.: OLT Slot 1 PON 1"
             value={form.origemSinal}
             onChange={(e) => update("origemSinal", e.target.value)}
           />
@@ -125,7 +128,7 @@ export function PopupSalvarCaixa({ open, kind, onSalvar, onCancelar }: Props) {
         <label>
           Area de atendimento*
           <input
-            placeholder="Ex.: Quadra 21 / Predio B"
+            placeholder="Ex.: Quadra 21 / Cidade A"
             value={form.areaAtendimento}
             onChange={(e) => update("areaAtendimento", e.target.value)}
           />

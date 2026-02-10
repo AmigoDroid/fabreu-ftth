@@ -8,6 +8,14 @@ type Props = {
 }
 
 export function CEOLayer({ ceos, onSelectCEO }: Props) {
+  function colorByType(tipo: CEO["tipo"]) {
+    if (tipo === "CTO") return "#0b5fa5"
+    if (tipo === "OLT") return "#22543d"
+    if (tipo === "DIO") return "#7c2d12"
+    if (tipo === "CLIENTE") return "#4c1d95"
+    return "#111"
+  }
+
   return (
     <>
       {ceos.map((c) => (
@@ -17,7 +25,7 @@ export function CEOLayer({ ceos, onSelectCEO }: Props) {
           onClick={() => onSelectCEO(c)}
           label={{
             text: c.tipo,
-            color: c.tipo === "CTO" ? "#0b5fa5" : "#111",
+            color: colorByType(c.tipo),
             fontWeight: "700"
           }}
         />

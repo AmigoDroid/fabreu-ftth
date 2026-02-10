@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { CEO, CEOSplitterMode, CTOConnectorType, CTODropStatus, CTOTerminationType, FiberSegment, SplitterRef } from "@/types/ftth"
 import { CableConnectionsSection } from "./cto-editor/CableConnectionsSection"
 import { chipStyle, dotStyle, legsFromType } from "./cto-editor/utils"
@@ -50,7 +50,7 @@ type Pending =
   | { splitterId: string; input: true }
   | { cableRef: SplitterRef }
   | null
-type UiLine = { key: string; from: { x: number; y: number }; to: { x: number; y: number }; color: string }
+type UiLine = { key: string; from: { x: number; y: number }; to: { x: number; y: number }; color: string; refs?: string[] }
 
 function getSplitterCfg(ceo: CEO, splitterId: string) {
   return ceo.ctoModel?.splitterConfigs?.find((s) => s.splitterId === splitterId) ?? {
@@ -93,6 +93,11 @@ export function CTOEditor({
   const [pending, setPending] = useState<Pending>(null)
   const [cableToCableMode, setCableToCableMode] = useState(false)
   const [dropClientName, setDropClientName] = useState("")
+  const [hoverKey, setHoverKey] = useState<string | null>(null)
+  const [mouseMode, setMouseMode] = useState<"SELECT" | "PAN">("SELECT")
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newType, setNewType] = useState<"1x8" | "1x16">("1x8")
@@ -108,6 +113,7 @@ export function CTOEditor({
   const [lines, setLines] = useState<UiLine[]>([])
   const diagramRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const panStartRef = useRef<{ x: number; y: number; baseX: number; baseY: number } | null>(null)
 
   const portsPlugged = useMemo(() => ceo.ports.filter((p) => p.caboId != null), [ceo.ports])
   const cableByPort = useMemo(() => {
@@ -163,7 +169,13 @@ export function CTOEditor({
             if (fiberEl && pinEl) {
               const a = fiberEl.getBoundingClientRect()
               const b = pinEl.getBoundingClientRect()
-              next.push({ key: `in-${s.id}`, from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 }, to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 }, color: "#2f54eb" })
+              next.push({
+                key: `in-${s.id}`,
+                from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 },
+                to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 },
+                color: "#2f54eb",
+                refs: [refKey(s.input), `spl-in:${s.id}`]
+              })
             }
           }
           for (const o of s.outputs) {
@@ -173,7 +185,13 @@ export function CTOEditor({
             if (pinEl && fiberEl) {
               const a = pinEl.getBoundingClientRect()
               const b = fiberEl.getBoundingClientRect()
-              next.push({ key: `out-${s.id}-${o.leg}`, from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 }, to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 }, color: "#13c2c2" })
+              next.push({
+                key: `out-${s.id}-${o.leg}`,
+                from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 },
+                to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 },
+                color: "#13c2c2",
+                refs: [refKey(o.target), `spl-leg:${s.id}:${o.leg}`]
+              })
             }
           }
         }
@@ -188,7 +206,8 @@ export function CTOEditor({
             key: `fuse-${i}-${f.a.portId}-${f.a.fibraId}-${f.b.portId}-${f.b.fibraId}`,
             from: { x: a.right - base.left, y: a.top - base.top + a.height / 2 },
             to: { x: b.left - base.left, y: b.top - base.top + b.height / 2 },
-            color: "#fa8c16"
+            color: "#fa8c16",
+            refs: [refKey(f.a), refKey(f.b)]
           })
         }
         setLines(next)
@@ -207,6 +226,44 @@ export function CTOEditor({
       ro.disconnect()
     }
   }, [secondaries, ceo])
+
+  useEffect(() => {
+    const up = () => {
+      panStartRef.current = null
+      setIsPanning(false)
+    }
+    window.addEventListener("mouseup", up)
+    return () => window.removeEventListener("mouseup", up)
+  }, [])
+
+  function clampZoom(next: number) {
+    return Math.min(2.2, Math.max(0.75, next))
+  }
+
+  function handleDiagramWheel(e: React.WheelEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const factor = e.deltaY < 0 ? 1.07 : 0.93
+    setZoom((z) => clampZoom(z * factor))
+  }
+
+  function startPanning(e: React.MouseEvent<HTMLDivElement>) {
+    if (mouseMode !== "PAN" || e.button !== 0) return
+    e.preventDefault()
+    panStartRef.current = { x: e.clientX, y: e.clientY, baseX: pan.x, baseY: pan.y }
+    setIsPanning(true)
+  }
+
+  function movePanning(e: React.MouseEvent<HTMLDivElement>) {
+    if (!panStartRef.current) return
+    const dx = e.clientX - panStartRef.current.x
+    const dy = e.clientY - panStartRef.current.y
+    setPan({ x: panStartRef.current.baseX + dx, y: panStartRef.current.baseY + dy })
+  }
+
+  function resetView() {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
 
   function handleFiberClick(portId: string, fibraId: number) {
     const ref: SplitterRef = { portId, fibraId }
@@ -279,23 +336,61 @@ export function CTOEditor({
   }), [secondaries, ceo])
 
   const panelStyle: React.CSSProperties = fullscreen
-    ? { position: "fixed", inset: 12, zIndex: 1500, background: "#fff", border: "1px solid #e5e5e5", borderRadius: 14, boxShadow: "0 12px 30px rgba(0,0,0,0.2)", overflow: "auto", padding: 14 }
-    : { position: "absolute", top: 20, right: 20, zIndex: 1000, width: 1180, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 14, border: "1px solid #e5e5e5", boxShadow: "0 12px 30px rgba(0,0,0,0.15)", padding: 14 }
+    ? {
+        position: "fixed",
+        inset: 12,
+        zIndex: 1500,
+        background: "linear-gradient(145deg, #f7fafc 0%, #ffffff 38%, #eef4ff 100%)",
+        border: "1px solid #dce4f0",
+        borderRadius: 14,
+        boxShadow: "0 16px 44px rgba(8, 20, 43, 0.28)",
+        overflow: "auto",
+        padding: 14,
+        backdropFilter: "blur(6px)"
+      }
+    : {
+        position: "absolute",
+        top: 20,
+        right: 20,
+        zIndex: 1000,
+        width: 1180,
+        maxHeight: "90vh",
+        overflow: "auto",
+        background: "linear-gradient(160deg, #f9fbff 0%, #ffffff 52%, #eef5ff 100%)",
+        borderRadius: 14,
+        border: "1px solid #dce4f0",
+        boxShadow: "0 14px 36px rgba(8, 20, 43, 0.2)",
+        padding: 14,
+        backdropFilter: "blur(6px)"
+      }
 
   return (
     <div ref={panelRef} style={panelStyle}>
+      <style>{`
+        .cto-line-glow {
+          filter: blur(2px);
+          opacity: .45;
+        }
+        .cto-line-main {
+          stroke-dasharray: 8 7;
+          animation: ctoFlow 1.6s linear infinite;
+        }
+        @keyframes ctoFlow {
+          to { stroke-dashoffset: -30; }
+        }
+      `}</style>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10 }}>
         <div>
           <div style={{ fontWeight: 900, fontSize: 16 }}>{ceo.nome} (CTO)</div>
           <div style={{ fontSize: 12, color: "#555" }}>{ceo.descricao}</div>
           <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-            <button onClick={() => setTab("FUSOES_SPLITTERS")} style={{ border: "1px solid #ddd", background: tab === "FUSOES_SPLITTERS" ? "#111" : "#fff", color: tab === "FUSOES_SPLITTERS" ? "#fff" : "#111", borderRadius: 10, padding: "6px 10px", cursor: "pointer", fontWeight: 900 }}>Aba 1: Fusoes e Splitters</button>
-            <button onClick={() => setTab("PORTAS_CLIENTES")} style={{ border: "1px solid #ddd", background: tab === "PORTAS_CLIENTES" ? "#111" : "#fff", color: tab === "PORTAS_CLIENTES" ? "#fff" : "#111", borderRadius: 10, padding: "6px 10px", cursor: "pointer", fontWeight: 900 }}>Aba 2: Portas e Clientes</button>
+            <button onClick={() => setTab("FUSOES_SPLITTERS")} style={{ border: "1px solid #cfd8e6", background: tab === "FUSOES_SPLITTERS" ? "#102a56" : "#fff", color: tab === "FUSOES_SPLITTERS" ? "#fff" : "#111", borderRadius: 10, padding: "6px 10px", cursor: "pointer", fontWeight: 900, transition: "all .2s ease" }}>Aba 1: Fusoes e Splitters</button>
+            <button onClick={() => setTab("PORTAS_CLIENTES")} style={{ border: "1px solid #cfd8e6", background: tab === "PORTAS_CLIENTES" ? "#102a56" : "#fff", color: tab === "PORTAS_CLIENTES" ? "#fff" : "#111", borderRadius: 10, padding: "6px 10px", cursor: "pointer", fontWeight: 900, transition: "all .2s ease" }}>Aba 2: Portas e Clientes</button>
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setFullscreen((v) => !v)} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>{fullscreen ? "Sair tela cheia" : "Tela cheia"}</button>
-          <button onClick={onClose} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>Fechar</button>
+          <button onClick={() => setFullscreen((v) => !v)} style={{ border: "1px solid #cfd8e6", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>{fullscreen ? "Sair tela cheia" : "Tela cheia"}</button>
+          <button onClick={onClose} style={{ border: "1px solid #cfd8e6", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>Fechar</button>
         </div>
       </div>
 
@@ -311,16 +406,60 @@ export function CTOEditor({
       />
 
       {tab === "FUSOES_SPLITTERS" && (
-        <div ref={diagramRef} style={{ marginTop: 12, position: "relative", border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }}>
-            {lines.map((l) => {
-              const mid = (l.to.x - l.from.x) * 0.35
-              const d = `M ${l.from.x} ${l.from.y} C ${l.from.x + mid} ${l.from.y}, ${l.to.x - mid} ${l.to.y}, ${l.to.x} ${l.to.y}`
-              return <path key={l.key} d={d} fill="none" stroke={l.color} strokeWidth={3} strokeLinecap="round" opacity={0.9} />
-            })}
-          </svg>
+        <div
+          ref={diagramRef}
+          onWheel={handleDiagramWheel}
+          onMouseDown={startPanning}
+          onMouseMove={movePanning}
+          style={{
+            marginTop: 12,
+            position: "relative",
+            border: "1px solid #dbe5f3",
+            borderRadius: 12,
+            padding: 12,
+            background:
+              "radial-gradient(circle at 15% 14%, rgba(146,191,255,.18) 0%, rgba(146,191,255,0) 32%), radial-gradient(circle at 85% 80%, rgba(19,194,194,.12) 0%, rgba(19,194,194,0) 34%), #fbfdff",
+            overflow: "hidden",
+            cursor: mouseMode === "PAN" ? (isPanning ? "grabbing" : "grab") : "default"
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setMouseMode("SELECT")} style={{ border: "1px solid #cfd8e6", borderRadius: 8, background: mouseMode === "SELECT" ? "#102a56" : "#fff", color: mouseMode === "SELECT" ? "#fff" : "#1f2937", padding: "4px 8px", cursor: "pointer", fontSize: 12 }}>Mouse: selecao</button>
+              <button onClick={() => setMouseMode("PAN")} style={{ border: "1px solid #cfd8e6", borderRadius: 8, background: mouseMode === "PAN" ? "#102a56" : "#fff", color: mouseMode === "PAN" ? "#fff" : "#1f2937", padding: "4px 8px", cursor: "pointer", fontSize: 12 }}>Mouse: arrastar</button>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={() => setZoom((v) => clampZoom(v * 0.9))} style={{ border: "1px solid #cfd8e6", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px", fontWeight: 700 }}>-</button>
+              <div style={{ fontSize: 12, minWidth: 56, textAlign: "center", color: "#374151" }}>{Math.round(zoom * 100)}%</div>
+              <button onClick={() => setZoom((v) => clampZoom(v * 1.1))} style={{ border: "1px solid #cfd8e6", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px", fontWeight: 700 }}>+</button>
+              <button onClick={resetView} style={{ border: "1px solid #cfd8e6", borderRadius: 8, background: "#fff", cursor: "pointer", padding: "4px 8px", fontSize: 12 }}>Reset vista</button>
+            </div>
+          </div>
 
-          <div style={{ position: "relative", zIndex: 2, display: "grid", gridTemplateColumns: "1fr 1.2fr 1fr", gap: 12 }}>
+          <div
+            style={{
+              position: "relative",
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: "top left",
+              transition: isPanning ? "none" : "transform .16s ease-out"
+            }}
+          >
+            <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }}>
+              {lines.map((l) => {
+                const mid = (l.to.x - l.from.x) * 0.35
+                const d = `M ${l.from.x} ${l.from.y} C ${l.from.x + mid} ${l.from.y}, ${l.to.x - mid} ${l.to.y}, ${l.to.x} ${l.to.y}`
+                const highlighted = hoverKey ? Boolean(l.refs?.includes(hoverKey)) : false
+                const faded = hoverKey ? !highlighted : false
+                return (
+                  <g key={l.key}>
+                    <path d={d} fill="none" stroke={l.color} strokeWidth={8} className="cto-line-glow" strokeLinecap="round" opacity={faded ? 0.08 : highlighted ? 0.9 : 0.35} />
+                    <path d={d} fill="none" stroke={l.color} strokeWidth={highlighted ? 4.3 : 3} className="cto-line-main" strokeLinecap="round" opacity={faded ? 0.22 : 0.95} />
+                  </g>
+                )
+              })}
+            </svg>
+
+            <div style={{ position: "relative", zIndex: 2, display: "grid", gridTemplateColumns: "1fr 1.2fr 1fr", gap: 12 }}>
             <div>
               <div style={{ fontWeight: 900, marginBottom: 6 }}>Cabo esquerdo (entrada/fonte)</div>
               <div style={{ marginBottom: 8, display: "flex", gap: 6 }}>
@@ -347,11 +486,21 @@ export function CTOEditor({
                       <div
                         key={f.id}
                         data-fiber={`${leftPortId}:${f.id}`}
-                        style={chipStyle(activeCablePick, busy && pending == null)}
+                        style={{
+                          ...chipStyle(activeCablePick, busy && pending == null),
+                          border: hoverKey === `${leftPortId}::${f.id}` ? "1px solid #2f54eb" : activeCablePick ? "2px solid #102a56" : "1px solid #d7e0ef",
+                          boxShadow: hoverKey === `${leftPortId}::${f.id}` ? "0 6px 14px rgba(47,84,235,.23)" : "0 1px 1px rgba(0,0,0,.03)",
+                          transform: hoverKey === `${leftPortId}::${f.id}` ? "translateY(-1px)" : "none",
+                          transition: "all .14s ease"
+                        }}
+                        onMouseEnter={() => setHoverKey(`${leftPortId}::${f.id}`)}
+                        onMouseLeave={() => setHoverKey((v) => (v === `${leftPortId}::${f.id}` ? null : v))}
                         onClick={() => {
+                          if (mouseMode === "PAN") return
                           if (cableToCableMode && !pending) startCableToCableFrom(ref)
                           else handleFiberClick(leftPortId, f.id)
                         }}
+                        title={`${leftPortId} / Fibra ${f.id}`}
                       >
                         <span style={dotStyle(f.cor)} />F{f.id}
                       </div>
@@ -377,9 +526,9 @@ export function CTOEditor({
                   const termOnCard = getLegTermination(ceo.ctoModel, s.id, legOnCard)
                   const targetOnCard = s.outputs.find((o) => o.leg === legOnCard)?.target
                   return (
-                    <div key={s.id} style={{ width: 300, border: "1px solid #ddd", borderRadius: 12, padding: 8, background: activeSecondary?.id === s.id ? "#fafafa" : "#fff" }}>
+                    <div key={s.id} style={{ width: 300, border: activeSecondary?.id === s.id ? "1px solid #9bb4df" : "1px solid #d8e1ef", borderRadius: 12, padding: 8, background: activeSecondary?.id === s.id ? "linear-gradient(160deg,#f6f9ff 0%, #ffffff 70%)" : "#fff", boxShadow: activeSecondary?.id === s.id ? "0 10px 22px rgba(16,42,86,.14)" : "0 4px 10px rgba(16,42,86,.05)", transition: "all .16s ease" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <button onClick={() => setActiveSecondaryId(s.id)} style={{ border: "1px solid #ddd", borderRadius: 8, background: activeSecondary?.id === s.id ? "#111" : "#fff", color: activeSecondary?.id === s.id ? "#fff" : "#111", padding: "4px 8px", fontWeight: 900, cursor: "pointer" }}>
+                        <button onClick={() => setActiveSecondaryId(s.id)} style={{ border: "1px solid #cfd8e6", borderRadius: 8, background: activeSecondary?.id === s.id ? "#102a56" : "#fff", color: activeSecondary?.id === s.id ? "#fff" : "#111", padding: "4px 8px", fontWeight: 900, cursor: "pointer" }}>
                           {s.type} {cfg.connectorized ? `[${cfg.connectorType}]` : "[FUSIVEL]"}
                         </button>
                         <button onClick={() => onRemoveSplitter(ceo.id, s.id)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer" }}>Remover</button>
@@ -389,7 +538,13 @@ export function CTOEditor({
                       </div>
                       <div style={{ marginTop: 6, border: "1px solid #eee", borderRadius: 8, padding: 6 }}>
                         <svg width="100%" height="150" viewBox="0 0 280 150">
-                          <rect x="98" y="20" width="84" height="110" rx="10" fill="#fff" stroke="#111" strokeWidth="2" />
+                          <defs>
+                            <linearGradient id={`spl-body-${s.id}`} x1="0" y1="0" x2="1" y2="1">
+                              <stop offset="0%" stopColor="#f9fbff" />
+                              <stop offset="100%" stopColor="#e8eefc" />
+                            </linearGradient>
+                          </defs>
+                          <rect x="98" y="20" width="84" height="110" rx="10" fill={`url(#spl-body-${s.id})`} stroke="#102a56" strokeWidth="2" />
                           <text x="140" y="44" textAnchor="middle" fontSize="12" fontWeight="700">{s.type}</text>
                           <text x="140" y="58" textAnchor="middle" fontSize="9" fill="#666">{s.mode}</text>
                           <text x="140" y="71" textAnchor="middle" fontSize="8" fill="#888">{cfg.connectorized ? `CON ${cfg.connectorType}` : "FIBRA NUA"}</text>
@@ -400,11 +555,16 @@ export function CTOEditor({
                             cy="75"
                             r="6"
                             data-spl-in={s.id}
-                            onClick={() => setPending({ splitterId: s.id, input: true })}
+                            onMouseEnter={() => setHoverKey(`spl-in:${s.id}`)}
+                            onMouseLeave={() => setHoverKey((v) => (v === `spl-in:${s.id}` ? null : v))}
+                            onClick={() => {
+                              if (mouseMode === "PAN") return
+                              setPending({ splitterId: s.id, input: true })
+                            }}
                             fill={pending && "input" in pending && pending.splitterId === s.id ? "#111" : "#fff"}
-                            stroke="#111"
+                            stroke={hoverKey === `spl-in:${s.id}` ? "#2f54eb" : "#111"}
                             strokeWidth="2"
-                            style={{ cursor: "pointer" }}
+                            style={{ cursor: mouseMode === "PAN" ? "default" : "pointer" }}
                           />
 
                           {legs.slice(0, 16).map((leg, idx) => {
@@ -427,15 +587,18 @@ export function CTOEditor({
                                   cy={y}
                                   r="5.3"
                                   data-spl-leg={`${s.id}:${leg}`}
+                                  onMouseEnter={() => setHoverKey(`spl-leg:${s.id}:${leg}`)}
+                                  onMouseLeave={() => setHoverKey((v) => (v === `spl-leg:${s.id}:${leg}` ? null : v))}
                                   onClick={() => {
+                                    if (mouseMode === "PAN") return
                                     setActiveSecondaryId(s.id)
                                     setActiveLeg(leg)
                                     if (term === "FIBRA_NUA") setPending({ splitterId: s.id, leg })
                                   }}
                                   fill={color}
-                                  stroke="#111"
+                                  stroke={hoverKey === `spl-leg:${s.id}:${leg}` ? "#13c2c2" : "#111"}
                                   strokeWidth="1.5"
-                                  style={{ cursor: term === "FIBRA_NUA" ? "pointer" : "default" }}
+                                  style={{ cursor: term === "FIBRA_NUA" && mouseMode !== "PAN" ? "pointer" : "default" }}
                                 />
                                 {legs.length <= 8 && <text x="214" y={y + 3} fontSize="8" fill="#666">L{leg}</text>}
                                 {tgt && <circle cx="194" cy={y} r="2" fill="#13c2c2" />}
@@ -521,11 +684,21 @@ export function CTOEditor({
                       <div
                         key={f.id}
                         data-fiber={`${rightPortId}:${f.id}`}
-                        style={chipStyle(activeCablePick, busy && pending == null)}
+                        style={{
+                          ...chipStyle(activeCablePick, busy && pending == null),
+                          border: hoverKey === `${rightPortId}::${f.id}` ? "1px solid #13c2c2" : activeCablePick ? "2px solid #102a56" : "1px solid #d7e0ef",
+                          boxShadow: hoverKey === `${rightPortId}::${f.id}` ? "0 6px 14px rgba(19,194,194,.25)" : "0 1px 1px rgba(0,0,0,.03)",
+                          transform: hoverKey === `${rightPortId}::${f.id}` ? "translateY(-1px)" : "none",
+                          transition: "all .14s ease"
+                        }}
+                        onMouseEnter={() => setHoverKey(`${rightPortId}::${f.id}`)}
+                        onMouseLeave={() => setHoverKey((v) => (v === `${rightPortId}::${f.id}` ? null : v))}
                         onClick={() => {
+                          if (mouseMode === "PAN") return
                           if (cableToCableMode && !pending) startCableToCableFrom(ref)
                           else handleFiberClick(rightPortId, f.id)
                         }}
+                        title={`${rightPortId} / Fibra ${f.id}`}
                       >
                         <span style={dotStyle(f.cor)} />F{f.id}
                       </div>
@@ -535,8 +708,12 @@ export function CTOEditor({
               )}
             </div>
           </div>
+          </div>
 
-          <div style={{ marginTop: 10, border: "1px solid #eee", borderRadius: 12, padding: 10 }}>
+          <div style={{ marginTop: 10, border: "1px solid #d8e1ef", borderRadius: 12, padding: 10, background: "#fff" }}>
+            <div style={{ marginBottom: 8, fontSize: 12, color: "#475569", border: "1px dashed #cdd8ea", borderRadius: 8, padding: "6px 8px", background: "#f8fbff" }}>
+              Mouse: use roda para zoom, troque para &quot;arrastar&quot; para navegar no diagrama, e passe o mouse nos pontos/fibras para destacar o caminho optico.
+            </div>
             <div style={{ fontWeight: 900, marginBottom: 6 }}>Fusoes existentes (porta-fibra)</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {ceo.fusoes.length === 0 ? <div style={{ fontSize: 12, color: "#666" }}>Nenhuma fusao.</div> : ceo.fusoes.map((f, i) => (

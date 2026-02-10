@@ -16,14 +16,23 @@ import {
   CTOCableTubeSize,
   CTODropStatus,
   CTOTerminationType,
-  CTOConnectorType
+  CTOConnectorType,
+  OLTGbicClass,
+  OLTSignalProfile
 } from "@/types/ftth"
 import { findClosestPointOnPath, splitPathAt } from "./geoSplit"
 import { gerarFibras } from "@/components/map/gerarfibras"
 import type { FiberFormData } from "@/components/formInput"
 
 type LatLng = { lat: number; lng: number }
-type Mode = "draw-fiber" | "place-ceo" | "place-cto" | null
+type Mode = "draw-fiber" | "place-ceo" | "place-cto" | "place-olt" | "place-dio" | "place-cliente" | null
+
+type ActiveSignalSource = {
+  nodeId: number
+  portId: string
+  fibraId: number
+  label: string
+} | null
 
 type PlacementDraft = {
   kind: BoxKind
@@ -34,10 +43,15 @@ type PlacementDraft = {
   partB: LatLng[]
 }
 
-export function useFiberEditor(initialFibers: FiberSegment[]) {
+export function useFiberEditor(initialFibers: FiberSegment[], activeProjectId: string, activeCity: string, activePop: string) {
   const normalizeFibers = (list: FiberSegment[]) =>
     list.map((c) => ({
       ...c,
+      projectId: c.projectId ?? "project-default",
+      city: c.city ?? "Cidade Base",
+      pop: c.pop ?? "POP Central",
+      tubeCount: Math.max(1, c.tubeCount ?? 1),
+      fibersPerTube: Math.max(1, c.fibersPerTube ?? 12),
       fibras:
         c.fibras &&
         Array.isArray(c.fibras) &&
@@ -61,6 +75,7 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
 
   const [ceos, setCeos] = useState<CEO[]>([])
   const [selectedCEOId, setSelectedCEOId] = useState<number | null>(null)
+  const [activeSignalSource, setActiveSignalSource] = useState<ActiveSignalSource>(null)
 
   const [openBoxSave, setOpenBoxSave] = useState(false)
   const [pendingPlacement, setPendingPlacement] = useState<PlacementDraft | null>(null)
@@ -110,6 +125,14 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     }))
   }
 
+  function ensureTubeConfig(total: number, rawTubeCount?: number, rawFibersPerTube?: number) {
+    const safeTotal = Math.max(1, Math.floor(total))
+    const fibersPerTube = Math.max(1, Math.floor(rawFibersPerTube ?? 12))
+    const minTubeCount = Math.max(1, Math.ceil(safeTotal / fibersPerTube))
+    const tubeCount = Math.max(minTubeCount, Math.floor(rawTubeCount ?? minTubeCount))
+    return { tubeCount, fibersPerTube }
+  }
+
   function nextOutIndex(ports: CEOPort[]) {
     const outs = ports
       .filter((p) => p.direction === "OUT")
@@ -122,6 +145,9 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
   function normalizeCEO(c: CEO): CEO {
     return {
       ...c,
+      projectId: c.projectId ?? "project-default",
+      city: c.city ?? "Cidade Base",
+      pop: c.pop ?? "POP Central",
       tipo: c.tipo ?? "CEO",
       ports: Array.isArray(c.ports) ? c.ports : [],
       fusoes: Array.isArray(c.fusoes) ? c.fusoes : [],
@@ -134,7 +160,20 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
             splitterConfigs: Array.isArray(c.ctoModel?.splitterConfigs) ? c.ctoModel!.splitterConfigs : [],
             explicitlyUnfed: Boolean(c.ctoModel?.explicitlyUnfed)
           }
-        : c.ctoModel
+        : c.ctoModel,
+      oltModel: c.tipo === "OLT"
+        ? {
+            slots: Array.isArray(c.oltModel?.slots) ? c.oltModel!.slots.map((slot) => ({
+              ...slot,
+              pons: Array.isArray(slot.pons) ? slot.pons : []
+            })) : []
+          }
+        : c.oltModel,
+      dioModel: c.tipo === "DIO"
+        ? {
+            cityTag: c.dioModel?.cityTag ?? ""
+          }
+        : c.dioModel
     }
   }
 
@@ -250,13 +289,19 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
 
   function salvarNovaFibra(form: FiberFormData) {
     const total = Number(form.totalFibras ?? 12)
+    const tubeCfg = ensureTubeConfig(total, form.tubeCount, form.fibersPerTube)
     setFiberList((prev) => [
       ...prev,
       {
         id: nextId(),
+        projectId: activeProjectId,
+        city: activeCity,
+        pop: activePop,
         nome: form.nome,
         descricao: form.descricao,
         tipoCabo: form.tipoCabo,
+        tubeCount: tubeCfg.tubeCount,
+        fibersPerTube: tubeCfg.fibersPerTube,
         fabricante: form.fabricante,
         modelo: form.modelo,
         origem: form.origem,
@@ -324,15 +369,46 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
 
     const fibrasOriginais = sourceFiber.fibras?.length ? sourceFiber.fibras : gerarFibras(12)
 
-    const caboA: FiberSegment = { ...sourceFiber, id: caboAId, nome: `${sourceFiber.nome} A`, path: draft.partA, fibras: cloneFibras(fibrasOriginais) }
-    const caboB: FiberSegment = { ...sourceFiber, id: caboBId, nome: `${sourceFiber.nome} B`, path: draft.partB, fibras: cloneFibras(fibrasOriginais) }
+    const baseTubeCfg = ensureTubeConfig(
+      fibrasOriginais.length,
+      sourceFiber.tubeCount,
+      sourceFiber.fibersPerTube
+    )
+    const caboA: FiberSegment = {
+      ...sourceFiber,
+      id: caboAId,
+      nome: `${sourceFiber.nome} A`,
+      path: draft.partA,
+      fibras: cloneFibras(fibrasOriginais),
+      tubeCount: baseTubeCfg.tubeCount,
+      fibersPerTube: baseTubeCfg.fibersPerTube
+    }
+    const caboB: FiberSegment = {
+      ...sourceFiber,
+      id: caboBId,
+      nome: `${sourceFiber.nome} B`,
+      path: draft.partB,
+      fibras: cloneFibras(fibrasOriginais),
+      tubeCount: baseTubeCfg.tubeCount,
+      fibersPerTube: baseTubeCfg.fibersPerTube
+    }
 
     const splitters: CEOSplitter[] = []
+    const defaultPorts: CEOPort[] = [
+      { id: "IN-1", label: "Entrada", direction: "IN", caboId: caboAId },
+      { id: "OUT-1", label: "Saida 1", direction: "OUT", caboId: caboBId }
+    ]
+
+    const typeLabel = form.tipo === "CLIENTE" ? "Cliente" : form.tipo
+    const ports = defaultPorts
 
     const novaCaixa: CEO = {
       id: ceoId,
+      projectId: sourceFiber.projectId ?? activeProjectId,
+      city: sourceFiber.city ?? activeCity,
+      pop: sourceFiber.pop ?? activePop,
       tipo: form.tipo,
-      nome: form.nome,
+      nome: form.nome || `${typeLabel}-${ceoId}`,
       codigo: form.codigo,
       fabricante: form.fabricante,
       modelo: form.modelo,
@@ -340,13 +416,13 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
       areaAtendimento: form.areaAtendimento,
       descricao: form.descricao,
       position: draft.point,
-      ports: [
-        { id: "IN-1", label: "Entrada", direction: "IN", caboId: caboAId },
-        { id: "OUT-1", label: "Saida 1", direction: "OUT", caboId: caboBId }
-      ],
+      ports,
       fusoes: [],
       splitters,
       ctoModel: form.tipo === "CTO" ? { cableTubes: [], drops: [], legConfigs: [], splitterConfigs: [], explicitlyUnfed: false } : undefined
+      ,
+      oltModel: form.tipo === "OLT" ? { slots: [] } : undefined,
+      dioModel: form.tipo === "DIO" ? { cityTag: form.areaAtendimento || "" } : undefined
     }
 
     const cutProg = progressAlongPath(sourceFiber.path, draft.point)
@@ -698,6 +774,91 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     )
   }
 
+  function addOLTSlot(ceoId: number) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId || c.tipo !== "OLT") return c
+        const slots = c.oltModel?.slots ?? []
+        const idx = slots.length + 1
+        return {
+          ...c,
+          oltModel: {
+            slots: [...slots, { id: `SLOT-${nextId()}`, label: `Slot ${idx}`, pons: [] }]
+          }
+        }
+      })
+    )
+  }
+
+  function addOLTPon(ceoId: number, slotId: string) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId || c.tipo !== "OLT") return c
+
+        const outN = nextOutIndex(c.ports)
+        const portId = `OUT-${outN}`
+
+        const slots = (c.oltModel?.slots ?? []).map((slot) => {
+          if (slot.id !== slotId) return slot
+          const pons = slot.pons ?? []
+          const pIdx = pons.length + 1
+          return {
+            ...slot,
+            pons: [
+              ...pons,
+              {
+                id: `PON-${nextId()}`,
+                label: `PON ${pIdx}`,
+                portId,
+                gbicClass: "B+" as OLTGbicClass,
+                signalProfile: "GPON" as OLTSignalProfile,
+                enabled: true
+              }
+            ]
+          }
+        })
+
+        return {
+          ...c,
+          ports: [...c.ports, { id: portId, label: `PON ${outN}`, direction: "OUT", caboId: null }],
+          oltModel: { slots }
+        }
+      })
+    )
+  }
+
+  function setOLTPonConfig(
+    ceoId: number,
+    slotId: string,
+    ponId: string,
+    patch: Partial<{ gbicClass: OLTGbicClass; signalProfile: OLTSignalProfile; txDbm: number; enabled: boolean }>
+  ) {
+    setCeos((prev) =>
+      prev.map((c0) => {
+        const c = normalizeCEO(c0)
+        if (c.id !== ceoId || c.tipo !== "OLT") return c
+        const slots = (c.oltModel?.slots ?? []).map((slot) => {
+          if (slot.id !== slotId) return slot
+          return {
+            ...slot,
+            pons: (slot.pons ?? []).map((pon) => (pon.id === ponId ? { ...pon, ...patch } : pon))
+          }
+        })
+        return { ...c, oltModel: { slots } }
+      })
+    )
+  }
+
+  function activateSignalFromPort(nodeId: number, portId: string, fibraId: number, label: string) {
+    setActiveSignalSource({ nodeId, portId, fibraId, label })
+  }
+
+  function clearActiveSignal() {
+    setActiveSignalSource(null)
+  }
+
   function addCTODrop(
     ceoId: number,
     splitterId: string,
@@ -873,6 +1034,12 @@ export function useFiberEditor(initialFibers: FiberSegment[]) {
     addCTODrop,
     updateCTODrop,
     removeCTODrop,
+    addOLTSlot,
+    addOLTPon,
+    setOLTPonConfig,
+    activeSignalSource,
+    activateSignalFromPort,
+    clearActiveSignal,
 
     mode,
     setMode
